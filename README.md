@@ -1,6 +1,6 @@
-# lotus-wallet-lib
+# xpi-ts
 
-> **Bitcore-compatible wallet SDK for Lotus**
+> **TypeScript SDK for Lotus (XPI) wallets and other applications**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue)](https://www.typescriptlang.org/)
@@ -12,7 +12,7 @@ A comprehensive TypeScript library providing Bitcoin-like transaction primitives
 
 ## Features
 
-### 🔐 Cryptography & Signatures
+### Cryptography & Signatures
 
 - **Bitcore Modules** - Complete Bitcoin-like transaction primitives adapted for Lotus
   - Private/public key management
@@ -29,7 +29,7 @@ A comprehensive TypeScript library providing Bitcoin-like transaction primitives
   - MuSig2 integration
   - RANK protocol integration
 
-### 📊 RANK Protocol
+### RANK Protocol
 
 - **Social Ranking System** - On-chain reputation and content ranking
   - Positive/negative/neutral sentiment tracking
@@ -38,7 +38,7 @@ A comprehensive TypeScript library providing Bitcoin-like transaction primitives
   - Script builder and parser
   - Fee-based spam prevention
 
-### 🔧 Utilities
+### Utilities
 
 - **RPC Client** - Full-featured lotusd RPC interface
   - Network information
@@ -56,8 +56,8 @@ A comprehensive TypeScript library providing Bitcoin-like transaction primitives
 ## Installation
 
 ```bash
-# Install from GitHub source
-$ npm install LotusiaStewardship/lotus-wallet-lib
+# Install from npmjs registry
+$ npm install xpi-ts
 ```
 
 ### Requirements
@@ -72,8 +72,8 @@ $ npm install LotusiaStewardship/lotus-wallet-lib
 ### Basic Transaction
 
 ```typescript
-import { Bitcore } from 'lotus-wallet-lib'
-import { BIP44_COIN_TYPE } from 'lotus-wallet-lib/utils/constants'
+import { Bitcore } from 'xpi-ts'
+import { BIP44_COIN_TYPE } from 'xpi-ts/utils/constants'
 
 // Generate mnemonic
 const mnemonic = new Bitcore.Mnemonic()
@@ -102,8 +102,8 @@ console.log('Transaction:', tx.serialize())
 ### HD Wallet (BIP32/BIP39)
 
 ```typescript
-import { Bitcore } from 'lotus-wallet-lib'
-import { BIP44_COIN_TYPE } from 'lotus-wallet-lib/utils/constants'
+import { Bitcore } from 'xpi-ts'
+import { BIP44_COIN_TYPE } from 'xpi-ts/utils/constants'
 
 // Generate mnemonic
 const mnemonic = new Bitcore.Mnemonic()
@@ -129,7 +129,7 @@ const restoredHdKey = existingMnemonic.toHDPrivateKey()
 ### MuSig2 Multi-Signature
 
 ```typescript
-import { Bitcore } from 'lotus-wallet-lib'
+import { Bitcore } from 'xpi-ts'
 
 // Create MuSig2 signer
 const signer = new Bitcore.MuSig2Signer({
@@ -156,7 +156,7 @@ const result = signer.sign(prepare, allPublicNonces, message, allPartialSigs)
 ### RANK Social Ranking
 
 ```typescript
-import { Bitcore, RANK } from 'lotus-wallet-lib'
+import { Bitcore, RANK } from 'xpi-ts'
 
 // Create RANK script
 const rankScript = RANK.toScriptRANK(
@@ -202,7 +202,7 @@ const tx = new Bitcore.Transaction()
 ### Taproot Addresses
 
 ```typescript
-import { Bitcore } from 'lotus-wallet-lib'
+import { Bitcore } from 'xpi-ts'
 
 // Create simple Taproot address (key-path only)
 const privateKey = new Bitcore.PrivateKey()
@@ -240,8 +240,8 @@ console.log('Taproot with scripts:', addressWithScripts?.toString())
 ### RPC Client
 
 ```typescript
-import { Bitcore } from 'lotus-wallet-lib'
-import { type RPCConfig, RPCClient } from 'lotus-wallet-lib/lib/rpc'
+import { Bitcore } from 'xpi-ts'
+import { type RPCConfig, RPCClient } from 'xpi-ts/lib/rpc'
 
 // Configure daemon connection
 const config: RPCConfig = {
@@ -282,9 +282,9 @@ Bitcoin-like transaction primitives adapted for Lotus XPI:
 - **Encoding** - Base58, Base58Check, Varint
 
 ```typescript
-import * as Bitcore from 'lotus-wallet-lib/lib/bitcore'
+import * as Bitcore from 'xpi-ts/lib/bitcore'
 // or
-import { PrivateKey, Transaction, Address } from 'lotus-wallet-lib'
+import { PrivateKey, Transaction, Address } from 'xpi-ts'
 ```
 
 ### MuSig2
@@ -296,10 +296,7 @@ Multi-signature Schnorr signatures:
 - **Privacy** - Indistinguishable from single signatures
 
 ```typescript
-import {
-  MuSig2Session,
-  MuSig2Signer,
-} from 'lotus-wallet-lib/lib/bitcore/musig2'
+import { MuSig2Session, MuSig2Signer } from 'xpi-ts/lib/bitcore/musig2'
 ```
 
 ### RANK Protocol
@@ -312,11 +309,7 @@ On-chain social ranking and reputation system:
 - **Spam prevention** - Fee-based filtering
 
 ```typescript
-import {
-  toScriptRANK,
-  toScriptRNKC,
-  ScriptProcessor,
-} from 'lotus-wallet-lib/lib/rank'
+import { toScriptRANK, toScriptRNKC, ScriptProcessor } from 'xpi-ts/lib/rank'
 ```
 
 ### Taproot
@@ -329,7 +322,7 @@ Pay-to-Taproot support with script paths:
 - **RANK integration** - RANK protocol via Taproot
 
 ```typescript
-import { Taproot } from 'lotus-wallet-lib/lib/bitcore/taproot'
+import { Taproot } from 'xpi-ts/lib/bitcore/taproot'
 ```
 
 ### RPC Client
@@ -342,7 +335,7 @@ Full-featured RPC client for lotusd:
 - **Type-safe** - Full TypeScript support
 
 ```typescript
-import { type RPCConfig, RPCClient } from 'lotus-wallet-lib/lib/rpc'
+import { type RPCConfig, RPCClient } from 'xpi-ts/lib/rpc'
 ```
 
 ---
@@ -489,8 +482,8 @@ Contributions are welcome! Please:
 
 ```bash
 # Clone repository
-git clone https://github.com/LotusiaStewardship/lotus-wallet-lib.git
-cd lotus-wallet-lib
+git clone https://github.com/LotusiaStewardship/xpi-ts.git
+cd xpi-ts
 
 # Install dependencies
 npm install
@@ -512,20 +505,11 @@ npm test
 
 ## Related Projects
 
-- **lotus-sdk** - Full Lotus SDK with P2P networking  
-  https://github.com/LotusiaStewardship/lotus-sdk
-
 - **lotusd** - Lotus full node implementation  
   https://github.com/LotusiaStewardship/lotusd
 
-- **lotus-explorer** - Lotus blockchain explorer  
-  https://github.com/LotusiaStewardship/lotus-explorer
-
-- **lotus-backend-ts** - Lotus backend services  
-  https://github.com/LotusiaStewardship/lotus-backend-ts
-
-- **rank-dashboard** - RANK protocol dashboard  
-  https://github.com/LotusiaStewardship/rank-dashboard
+- **lotus-web-wallet** - Lotus web wallet with full Taproot support  
+  https://github.com/LotusiaStewardship/lotus-web-wallet
 
 ---
 

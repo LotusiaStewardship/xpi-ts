@@ -1,5 +1,5 @@
 {
-  "name": "lotus-wallet-lib",
+  "name": "xpi-ts",
   "version": "0.2.0",
   "description": "Bitcore-compatible wallet SDK for Lotus",
   "main": "./dist/index.js",
@@ -50,7 +50,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/LotusiaStewardship/lotus-wallet-lib.git"
+    "url": "git+https://github.com/lotusia-stewardship/xpi-ts.git"
   },
   "keywords": [
     "lotus",
@@ -64,9 +64,9 @@
   "author": "Lotusia Stewardship",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/LotusiaStewardship/lotus-wallet-lib/issues"
+    "url": "https://github.com/LotusiaStewardship/xpi-ts/issues"
   },
-  "homepage": "https://github.com/LotusiaStewardship/lotus-wallet-lib#readme",
+  "homepage": "https://github.com/LotusiaStewardship/xpi-ts#readme",
   "dependencies": {
     "@noble/hashes": "^1.7.2",
     "bn.js": "5.2.2",
