@@ -1,0 +1,91 @@
+{
+  "name": "lotus-wallet-lib",
+  "version": "0.2.0",
+  "description": "Bitcore-compatible wallet SDK for Lotus",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./lib/bitcore": {
+      "types": "./dist/lib/bitcore/index.d.ts",
+      "import": "./dist/lib/bitcore/index.js"
+    },
+    "./lib/bitcore/*": {
+      "types": "./dist/lib/bitcore/*.d.ts",
+      "import": "./dist/lib/bitcore/*.js"
+    },
+    "./lib/rank": {
+      "types": "./dist/lib/rank/index.d.ts",
+      "import": "./dist/lib/rank/index.js"
+    },
+    "./lib/rank/*": {
+      "types": "./dist/lib/rank/*.d.ts",
+      "import": "./dist/lib/rank/*.js"
+    },
+    "./lib/*": {
+      "types": "./dist/lib/*.d.ts",
+      "import": "./dist/lib/*.js"
+    },
+    "./utils/*": {
+      "types": "./dist/utils/*.d.ts",
+      "import": "./dist/utils/*.js"
+    }
+  },
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "version": "npm run build",
+    "postversion": "git push && git push --tags",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LotusiaStewardship/lotus-wallet-lib.git"
+  },
+  "keywords": [
+    "lotus",
+    "xpi",
+    "lotusia",
+    "tools",
+    "wallet",
+    "rpc",
+    "rank"
+  ],
+  "author": "Lotusia Stewardship",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/LotusiaStewardship/lotus-wallet-lib/issues"
+  },
+  "homepage": "https://github.com/LotusiaStewardship/lotus-wallet-lib#readme",
+  "dependencies": {
+    "@noble/hashes": "^1.7.2",
+    "bn.js": "5.2.2",
+    "bs58": "6.0.0",
+    "chronik-client": "0.19.0",
+    "dotenv": "17.2.3",
+    "dotenv-cli": "8.0.0",
+    "elliptic": "^6.6.1",
+    "validator": "13.15.20"
+  },
+  "devDependencies": {
+    "@types/bn.js": "5.2.0",
+    "@types/bs58": "4.0.4",
+    "@types/elliptic": "6.4.18",
+    "@types/node": "24.0.10",
+    "@types/validator": "13.15.4",
+    "prettier": "3.6.2",
+    "tsx": "^4.21.0",
+    "typescript": "5.8.3",
+    "typescript-eslint": "8.47.0"
+  }
+}
