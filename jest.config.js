@@ -22,8 +22,8 @@ export default {
     '^.+\\.tsx?$': ['ts-jest', {
       useESM: true,
       tsconfig: {
-        module: 'ES2020',
-        target: 'ES2020',
+        module: 'ES2022',
+        target: 'ES2022',
         esModuleInterop: true,
         allowSyntheticDefaultImports: true,
       },
