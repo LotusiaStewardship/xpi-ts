@@ -1,6 +1,6 @@
 {
   "name": "xpi-ts",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Bitcore-compatible wallet SDK for Lotus",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
