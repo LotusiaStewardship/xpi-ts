@@ -119,7 +119,7 @@ export class ECDSA {
     const N = Point.getN()
     let k: BN
     do {
-      k = new BN(Random.getPseudoRandomBuffer(32), 'be')
+      k = new BN(Random.getRandomBuffer(32), 'be')
     } while (!(k.lt(N) && k.gt(new BN(0))))
     this.k = k
     return this
