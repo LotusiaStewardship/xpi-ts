@@ -728,13 +728,16 @@ export class MuSigSessionManager {
     // For Taproot, use the commitment (tweaked pubkey) instead of aggregated pubkey
     // because the partial signatures were created using the commitment in the challenge hash
     let pubKeyForAggregation = session.keyAggContext.aggregatedPubKey
+    let pubKeyForNonceCoef = session.keyAggContext.aggregatedPubKey
     if (session.metadata?.inputScriptType === 'taproot') {
       // Compute Taproot commitment (merkle root is all zeros for key-path only)
       const merkleRoot = Buffer.alloc(32)
-      pubKeyForAggregation = tweakPublicKey(
+      const commitment = tweakPublicKey(
         session.keyAggContext.aggregatedPubKey,
         merkleRoot,
       )
+      pubKeyForAggregation = commitment
+      pubKeyForNonceCoef = commitment // Use commitment for nonce coefficient too
     }
 
     // Get sighash type from metadata (defaults to SIGHASH_ALL | SIGHASH_LOTUS for Taproot)
@@ -751,6 +754,7 @@ export class MuSigSessionManager {
       session.message,
       pubKeyForAggregation,
       sighashType,
+      pubKeyForNonceCoef, // Pass commitment for nonce coefficient consistency
     )
 
     session.phase = MuSigSessionPhase.COMPLETE

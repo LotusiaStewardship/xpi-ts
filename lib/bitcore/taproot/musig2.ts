@@ -233,20 +233,16 @@ export function signTaprootKeyPathWithMuSig2(
   // Compute commitment Q' = Q + t·G
   const commitment = keyAggContext.aggregatedPubKey.addScalar(tweak)
 
-  // ALL signers use commitment in challenge hash
-  const modifiedKeyAggContext: MuSigKeyAggContext = {
-    ...keyAggContext,
-    aggregatedPubKey: commitment,
-  }
-
-  // Compute normal partial signature using commitment
+  // Compute normal partial signature using commitment in challenge hash
+  // Pass commitment explicitly as publicKeyForChallenge parameter
   const partialSig = musigPartialSign(
     secretNonce,
     privateKey,
-    modifiedKeyAggContext,
+    keyAggContext,
     signerIndex,
     aggregatedNonce,
     message,
+    commitment, // Use commitment in challenge hash
   )
 
   // BIP327: Only signer 0 adds the correction term
@@ -357,10 +353,11 @@ export function verifyTaprootKeyPathMuSigPartial(
     adjustedPartialSig,
     publicNonce,
     publicKey,
-    modifiedKeyAggContext,
+    keyAggContext,
     signerIndex,
     aggregatedNonce,
     message,
+    commitment, // Pass commitment as publicKeyForChallenge
   )
 }
 

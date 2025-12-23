@@ -17,6 +17,11 @@ import {
   Schnorr,
   BN,
 } from '../../lib/bitcore/index.js'
+import {
+  buildMuSigTaprootKey,
+  signTaprootKeyPathWithMuSig2,
+  verifyTaprootKeyPathMuSigPartial,
+} from '../../lib/bitcore/taproot/musig2.js'
 
 describe('MuSig2', () => {
   describe('musigKeyAgg', () => {
@@ -672,6 +677,236 @@ describe('MuSig2', () => {
 
       assert.ok(verified, '10-of-10 MuSig2 should work')
       console.log('✓ 10-of-10 MuSig2 signature verified successfully!')
+    })
+
+    // Test quadratic residue edge case (R.y not a quadratic residue)
+    it('should handle quadratic residue edge case (R.y not a quadratic residue)', () => {
+      const alice = new PrivateKey()
+      const bob = new PrivateKey()
+      const ctx = musigKeyAgg([alice.publicKey, bob.publicKey])
+      const message = Buffer.alloc(32).fill(0x42)
+
+      // Generate nonces until we get R.y that is NOT a quadratic residue
+      let aliceNonce, bobNonce, aggNonce
+      let attempts = 0
+      const maxAttempts = 1000
+
+      do {
+        aliceNonce = musigNonceGen(alice, ctx.aggregatedPubKey, message)
+        bobNonce = musigNonceGen(bob, ctx.aggregatedPubKey, message)
+        aggNonce = musigNonceAgg([
+          aliceNonce.publicNonces,
+          bobNonce.publicNonces,
+        ])
+        attempts++
+      } while (aggNonce.R1.hasSquare() && attempts < maxAttempts)
+
+      // Verify we actually got a non-quadratic residue case
+      assert.ok(
+        !aggNonce.R1.hasSquare(),
+        'Should have found R.y that is not a quadratic residue',
+      )
+
+      // Create partial signatures
+      const alicePartialSig = musigPartialSign(
+        aliceNonce,
+        alice,
+        ctx,
+        0,
+        aggNonce,
+        message,
+      )
+      const bobPartialSig = musigPartialSign(
+        bobNonce,
+        bob,
+        ctx,
+        1,
+        aggNonce,
+        message,
+      )
+
+      // Verify partial signatures (this is where the bug would manifest)
+      const aliceValid = musigPartialSigVerify(
+        alicePartialSig,
+        aliceNonce.publicNonces,
+        alice.publicKey,
+        ctx,
+        0,
+        aggNonce,
+        message,
+      )
+      const bobValid = musigPartialSigVerify(
+        bobPartialSig,
+        bobNonce.publicNonces,
+        bob.publicKey,
+        ctx,
+        1,
+        aggNonce,
+        message,
+      )
+
+      assert.ok(aliceValid, 'Alice partial signature should verify')
+      assert.ok(bobValid, 'Bob partial signature should verify')
+
+      // Also verify the aggregated signature
+      const finalSig = musigSigAgg(
+        [alicePartialSig, bobPartialSig],
+        aggNonce,
+        message,
+        ctx.aggregatedPubKey,
+      )
+
+      const verified = Schnorr.verify(
+        message,
+        finalSig,
+        ctx.aggregatedPubKey,
+        'big',
+      )
+
+      assert.ok(
+        verified,
+        'Final signature should verify even with non-quadratic residue',
+      )
+      console.log('✓ Quadratic residue edge case handled correctly!')
+    })
+
+    // Test challenge hash consistency between Taproot and non-Taproot
+    it('should verify partial signatures with consistent challenge hash', () => {
+      const alice = new PrivateKey()
+      const bob = new PrivateKey()
+      const ctx = musigKeyAgg([alice.publicKey, bob.publicKey])
+      const message = Buffer.alloc(32).fill(0x99)
+
+      const aliceNonce = musigNonceGen(alice, ctx.aggregatedPubKey, message)
+      const bobNonce = musigNonceGen(bob, ctx.aggregatedPubKey, message)
+      const aggNonce = musigNonceAgg([
+        aliceNonce.publicNonces,
+        bobNonce.publicNonces,
+      ])
+
+      // Create partial signatures with default (non-Taproot) path
+      const alicePartialSig = musigPartialSign(
+        aliceNonce,
+        alice,
+        ctx,
+        0,
+        aggNonce,
+        message,
+      )
+
+      // Verify with same challenge hash
+      const valid = musigPartialSigVerify(
+        alicePartialSig,
+        aliceNonce.publicNonces,
+        alice.publicKey,
+        ctx,
+        0,
+        aggNonce,
+        message,
+      )
+
+      assert.ok(
+        valid,
+        'Partial signature should verify with consistent challenge hash',
+      )
+      console.log('✓ Challenge hash consistency verified!')
+    })
+
+    // Test Taproot MuSig2 integration
+    it('should sign and verify Taproot MuSig2 transaction', () => {
+      const alice = new PrivateKey()
+      const bob = new PrivateKey()
+
+      // Create Taproot output
+      const taprootResult = buildMuSigTaprootKey([
+        alice.publicKey,
+        bob.publicKey,
+      ])
+
+      // Create message (transaction sighash)
+      const message = Buffer.alloc(32).fill(0x01)
+
+      // Generate nonces
+      const aliceNonce = musigNonceGen(
+        alice,
+        taprootResult.keyAggContext.aggregatedPubKey,
+        message,
+      )
+      const bobNonce = musigNonceGen(
+        bob,
+        taprootResult.keyAggContext.aggregatedPubKey,
+        message,
+      )
+      const aggNonce = musigNonceAgg([
+        aliceNonce.publicNonces,
+        bobNonce.publicNonces,
+      ])
+
+      // Create Taproot partial signatures
+      const alicePartialSig = signTaprootKeyPathWithMuSig2(
+        aliceNonce,
+        alice,
+        taprootResult.keyAggContext,
+        0,
+        aggNonce,
+        message,
+        taprootResult.tweak,
+      )
+      const bobPartialSig = signTaprootKeyPathWithMuSig2(
+        bobNonce,
+        bob,
+        taprootResult.keyAggContext,
+        1,
+        aggNonce,
+        message,
+        taprootResult.tweak,
+      )
+
+      // Verify Taproot partial signatures
+      const aliceValid = verifyTaprootKeyPathMuSigPartial(
+        alicePartialSig,
+        aliceNonce.publicNonces,
+        alice.publicKey,
+        taprootResult.keyAggContext,
+        0,
+        aggNonce,
+        message,
+        taprootResult.tweak,
+      )
+      const bobValid = verifyTaprootKeyPathMuSigPartial(
+        bobPartialSig,
+        bobNonce.publicNonces,
+        bob.publicKey,
+        taprootResult.keyAggContext,
+        1,
+        aggNonce,
+        message,
+        taprootResult.tweak,
+      )
+
+      assert.ok(aliceValid, 'Alice Taproot partial signature should verify')
+      assert.ok(bobValid, 'Bob Taproot partial signature should verify')
+
+      // Aggregate signatures with commitment for Taproot
+      const finalSig = musigSigAgg(
+        [alicePartialSig, bobPartialSig],
+        aggNonce,
+        message,
+        taprootResult.commitment,
+        undefined,
+        taprootResult.commitment, // Use commitment for nonce coefficient
+      )
+
+      // Verify with Schnorr (using commitment)
+      const verified = Schnorr.verify(
+        message,
+        finalSig,
+        taprootResult.commitment,
+        'big',
+      )
+
+      assert.ok(verified, 'Taproot MuSig2 signature should verify')
+      console.log('✓ Taproot MuSig2 integration test passed!')
     })
   })
 })
