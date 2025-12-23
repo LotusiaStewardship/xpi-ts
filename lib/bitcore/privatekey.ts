@@ -144,7 +144,7 @@ export class PrivateKey {
   private static _getRandomBN(): BN {
     let bn: BN
     do {
-      const privbuf = Random.getPseudoRandomBuffer(32)
+      const privbuf = Random.getRandomBuffer(32)
       bn = new BN(privbuf, 'be')
     } while (!bn.lt(Point.getN()))
     return bn
