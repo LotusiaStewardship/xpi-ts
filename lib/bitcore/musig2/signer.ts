@@ -527,6 +527,8 @@ export class MuSig2Signer {
       aggregatedNonce,
       normalizedSighash,
       prepare.commitment, // Use commitment (tweaked key) for Taproot!
+      undefined,
+      prepare.commitment, // Also use commitment for nonce coefficient consistency
     )
   }
 

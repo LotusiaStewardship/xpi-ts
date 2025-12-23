@@ -233,13 +233,14 @@ export function signTaprootKeyPathWithMuSig2(
   // Compute commitment Q' = Q + t·G
   const commitment = keyAggContext.aggregatedPubKey.addScalar(tweak)
 
-  // ALL signers use commitment in challenge hash
+  // For Taproot, we need to use commitment in BOTH the nonce coefficient AND challenge hash
+  // Create a modified context with commitment for consistent computation
   const modifiedKeyAggContext: MuSigKeyAggContext = {
     ...keyAggContext,
     aggregatedPubKey: commitment,
   }
 
-  // Compute normal partial signature using commitment
+  // Compute normal partial signature using commitment in both nonce coefficient and challenge hash
   const partialSig = musigPartialSign(
     secretNonce,
     privateKey,
@@ -317,7 +318,7 @@ export function verifyTaprootKeyPathMuSigPartial(
   // Compute commitment
   const commitment = keyAggContext.aggregatedPubKey.addScalar(tweak)
 
-  // Modified context with commitment
+  // Modified context with commitment for consistent verification
   const modifiedKeyAggContext: MuSigKeyAggContext = {
     ...keyAggContext,
     aggregatedPubKey: commitment,
@@ -357,7 +358,7 @@ export function verifyTaprootKeyPathMuSigPartial(
     adjustedPartialSig,
     publicNonce,
     publicKey,
-    modifiedKeyAggContext,
+    modifiedKeyAggContext, // Use modified context with commitment
     signerIndex,
     aggregatedNonce,
     message,

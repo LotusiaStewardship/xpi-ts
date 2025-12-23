@@ -508,6 +508,7 @@ export function musigPartialSign(
   signerIndex: number,
   aggregatedNonce: MuSigAggregatedNonce,
   message: Buffer,
+  publicKeyForChallenge?: PublicKey,
 ): BN {
   const n = Point.getN()
   const [k1, k2] = secretNonce.secretNonces
@@ -536,8 +537,10 @@ export function musigPartialSign(
   }
 
   // Step 5: Compute challenge e = H(R.x || compressed(Q) || m) - LOTUS FORMAT!
+  // Use override public key if provided (e.g., commitment for Taproot), otherwise use aggregated key
   const R_x = R.getX().toArrayLike(Buffer, 'be', 32)
-  const Q_compressed = Point.pointToCompressed(Q.point) // 33 bytes!
+  const keyForChallenge = publicKeyForChallenge || Q
+  const Q_compressed = Point.pointToCompressed(keyForChallenge.point) // 33 bytes!
   const challengeData = Buffer.concat([R_x, Q_compressed, message])
   const e = new BN(Hash.sha256(challengeData), 'be').umod(n)
 
@@ -597,6 +600,7 @@ export function musigPartialSigVerify(
   signerIndex: number,
   aggregatedNonce: MuSigAggregatedNonce,
   message: Buffer,
+  publicKeyForChallenge?: PublicKey,
 ): boolean {
   try {
     const G = Point.getG()
@@ -623,16 +627,24 @@ export function musigPartialSigVerify(
     // Step 3: Compute effective aggregated nonce: R = R1 + b*R2
     const R = R1.add(R2.mul(b))
 
-    // Handle Lotus nonce negation (if R.y not quadratic residue, negate)
+    // Step 4: Handle Lotus quadratic residue check
+    // If R.y is not a quadratic residue, the signing process negated k:
+    //   k_eff = -k (mod n)
+    // This means the signing equation becomes:
+    //   s_i = -k + e·a_i·x_i (mod n)
+    // For verification to work, we must negate R_i as well:
+    //   s_i·G = -R_i + e·a_i·P_i
     const negated = !R.hasSquare()
 
-    // Step 4: Compute challenge e = H(R.x || compressed(Q) || m) - LOTUS FORMAT!
+    // Step 5: Compute challenge e = H(R.x || compressed(Q) || m) - LOTUS FORMAT!
+    // Use override public key if provided (e.g., commitment for Taproot), otherwise use aggregated key
     const R_x = R.getX().toArrayLike(Buffer, 'be', 32)
-    const Q_compressed = Point.pointToCompressed(Q.point)
+    const keyForChallenge = publicKeyForChallenge || Q
+    const Q_compressed = Point.pointToCompressed(keyForChallenge.point)
     const challengeData = Buffer.concat([R_x, Q_compressed, message])
     const e = new BN(Hash.sha256(challengeData), 'be').umod(n)
 
-    // Step 5: Get key aggregation coefficient for this signer
+    // Step 7: Get key aggregation coefficient for this signer
     const a = keyAggContext.keyAggCoeff.get(signerIndex)
     if (!a) {
       throw new Error(`Invalid signer index: ${signerIndex}`)
@@ -646,7 +658,7 @@ export function musigPartialSigVerify(
 
     // Right side: R_i + e * a * P_i (or -R_i + e * a * P_i)
     const eaP = publicKey.point.mul(e.mul(a).umod(n))
-    // If R was negated, we need to use -R_i in verification
+    // If R was negated during signing, we must negate R_i during verification
     // Point negation: multiply by -1 = (n-1)
     const R_i_adjusted = negated ? R_i.mul(n.sub(new BN(1))) : R_i
     const rhs = R_i_adjusted.add(eaP)
@@ -707,6 +719,7 @@ export function musigSigAgg(
   message: Buffer,
   aggregatedPubKey: PublicKey,
   sighashType?: number,
+  publicKeyForNonceCoef?: PublicKey,
 ): Signature {
   if (partialSigs.length === 0) {
     throw new Error('Cannot aggregate zero partial signatures')
@@ -716,8 +729,11 @@ export function musigSigAgg(
   const { R1, R2 } = aggregatedNonce
 
   // Step 1: Compute nonce coefficient b = H("MuSig/noncecoef", Q || R1 || R2 || m)
+  // Use override public key if provided (e.g., commitment for Taproot), otherwise use aggregated key
+  // This must match the public key used during signing for consistency
+  const keyForNonceCoef = publicKeyForNonceCoef || aggregatedPubKey
   const nonceCoefData = Buffer.concat([
-    aggregatedPubKey.toBuffer(),
+    keyForNonceCoef.toBuffer(),
     Point.pointToCompressed(R1),
     Point.pointToCompressed(R2),
     message,
