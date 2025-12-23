@@ -345,17 +345,24 @@ export class Interpreter {
 
   /**
    * Check raw signature encoding
+   *
+   * Validates signature format based on context:
+   * - Schnorr signatures (64 bytes): Must be exactly 64 bytes
+   * - ECDSA signatures: Must be valid DER format
+   *
+   * Reference: lotusd/src/script/sigencoding.cpp
    */
   checkRawSignatureEncoding(buf: Buffer): boolean {
     if (buf.length === 0) {
       return true
     }
 
-    // TODO update interpreter.js and necessary functions to match bitcoin-abc interpreter.cpp
+    // Check if this is a Schnorr signature (64 bytes)
     if (Interpreter.isSchnorrSig(buf)) {
-      return true
+      return this.checkRawSchnorrSignatureEncoding(buf)
     }
 
+    // ECDSA signature validation
     if (
       (this.flags &
         (Interpreter.SCRIPT_VERIFY_DERSIG |
@@ -373,6 +380,98 @@ export class Interpreter {
         this.errstr = 'SCRIPT_ERR_SIG_DER_HIGH_S'
         return false
       }
+    }
+
+    return true
+  }
+
+  /**
+   * Check raw Schnorr signature encoding
+   *
+   * Schnorr signatures must be exactly 64 bytes (no sighash byte in raw format).
+   * This is called from checkRawSignatureEncoding when a 64-byte signature is detected.
+   *
+   * Reference: lotusd/src/script/sigencoding.cpp:186-193
+   */
+  private checkRawSchnorrSignatureEncoding(buf: Buffer): boolean {
+    // Schnorr signatures must be exactly 64 bytes
+    if (buf.length !== 64) {
+      this.errstr = 'SCRIPT_ERR_SIG_NONSCHNORR'
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Check transaction Schnorr signature encoding
+   *
+   * Transaction Schnorr signatures are 65 bytes: 64-byte signature + 1-byte sighash.
+   * This validates the format and sighash byte.
+   *
+   * Reference: lotusd/src/script/sigencoding.cpp:284-294
+   */
+  private checkTransactionSchnorrSignatureEncoding(buf: Buffer): boolean {
+    // Schnorr transaction signatures must be exactly 65 bytes (64 + sighash)
+    if (buf.length !== 65) {
+      this.errstr = 'SCRIPT_ERR_SIG_NONSCHNORR'
+      return false
+    }
+
+    // Validate the raw signature part (first 64 bytes)
+    if (!this.checkRawSchnorrSignatureEncoding(buf.subarray(0, 64))) {
+      return false
+    }
+
+    // Validate sighash byte
+    if (!this.checkSighashEncoding(buf)) {
+      return false
+    }
+
+    return true
+  }
+
+  /**
+   * Check sighash encoding
+   *
+   * Validates that the sighash byte is properly defined and follows fork ID rules.
+   *
+   * Reference: lotusd/src/script/sigencoding.cpp:217-240
+   */
+  private checkSighashEncoding(buf: Buffer): boolean {
+    if (buf.length === 0) {
+      return true
+    }
+
+    const hashType = buf[buf.length - 1]
+
+    // Check if hash type is defined (not 0x00)
+    if (hashType === 0x00) {
+      this.errstr = 'SCRIPT_ERR_SIG_HASHTYPE'
+      return false
+    }
+
+    // For Taproot key spend path, must use SIGHASH_LOTUS (0x60)
+    if (
+      this.flags & Interpreter.SCRIPT_TAPROOT_KEY_SPEND_PATH &&
+      (hashType & 0x60) !== 0x60
+    ) {
+      this.errstr = 'SCRIPT_ERR_TAPROOT_KEY_SPEND_MUST_USE_LOTUS_SIGHASH'
+      return false
+    }
+
+    // Check fork ID requirements
+    const usesForkId = (hashType & 0x40) !== 0
+    const forkIdEnabled =
+      (this.flags & Interpreter.SCRIPT_ENABLE_SIGHASH_FORKID) !== 0
+
+    if (!forkIdEnabled && usesForkId) {
+      this.errstr = 'SCRIPT_ERR_ILLEGAL_FORKID'
+      return false
+    }
+
+    if (forkIdEnabled && !usesForkId) {
+      this.errstr = 'SCRIPT_ERR_MUST_USE_FORKID'
+      return false
     }
 
     return true
@@ -432,6 +531,14 @@ export class Interpreter {
 
   /**
    * Check transaction signature encoding
+   *
+   * Transaction signatures include a sighash byte at the end.
+   * This method validates both the signature format and the sighash byte.
+   *
+   * For Schnorr signatures: 64 bytes signature + 1 byte sighash = 65 bytes total
+   * For ECDSA signatures: DER format + 1 byte sighash
+   *
+   * Reference: lotusd/src/script/sigencoding.cpp:242-259
    */
   checkTxSignatureEncoding(buf: Buffer): boolean {
     // Empty signature. Not strictly DER encoded, but allowed to provide a
@@ -440,6 +547,12 @@ export class Interpreter {
       return true
     }
 
+    // For Schnorr signatures (65 bytes total: 64 + sighash)
+    if (Interpreter.isSchnorrSig(buf)) {
+      return this.checkTransactionSchnorrSignatureEncoding(buf)
+    }
+
+    // For ECDSA signatures: validate raw signature (without sighash byte)
     if (!this.checkRawSignatureEncoding(buf.subarray(0, buf.length - 1))) {
       return false
     }

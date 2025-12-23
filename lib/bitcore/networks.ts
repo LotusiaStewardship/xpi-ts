@@ -16,7 +16,7 @@ function prefixToArray(prefix: string): number[] {
  */
 export interface NetworkConfig {
   /** The canonical name of the network (e.g., 'livenet', 'testnet'). */
-  name: string
+  name: NetworkName
   /** An alternative or friendly name for the network (e.g., 'mainnet', 'regtest'). */
   alias: string
   /** Prefix for P2PKH (Pay-to-Public-Key-Hash/legacy address) encoding. */
@@ -46,7 +46,7 @@ export interface NetworkConfig {
 }
 
 export class Network {
-  readonly name: string
+  readonly name: NetworkName
   readonly alias: string
   readonly pubkeyhash: number
   readonly privatekey: number
@@ -76,7 +76,7 @@ export class Network {
     this.networkbyte = config.networkbyte
   }
 
-  toString(): string {
+  toString(): NetworkName {
     return this.name
   }
 }
@@ -216,3 +216,6 @@ export const Networks = {
   testnet,
   regtest,
 }
+
+// Network names for type safety in other modules
+export type NetworkName = 'livenet' | 'testnet' | 'regtest'

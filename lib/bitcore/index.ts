@@ -55,6 +55,14 @@ export {
   type MuSigTaprootKeyResult,
 } from './taproot/musig2.js'
 
+// Sigtype utility functions
+export {
+  isSchnorrSignature,
+  isECDSASignature,
+  getSignatureType,
+  isValidSignatureLength,
+} from './crypto/sigtype.js'
+
 // Key modules
 export { PrivateKey } from './privatekey.js'
 export { PublicKey } from './publickey.js'
@@ -91,6 +99,7 @@ export {
   add as addNetwork,
   remove as removeNetwork,
   Networks,
+  type NetworkName,
 } from './networks.js'
 
 // Address modules
@@ -202,7 +211,13 @@ export type {
 export { Block, BlockHeader } from './block/index.js'
 
 // Mnemonic components
-export { Mnemonic, MnemonicError, pbkdf2, Words } from './mnemonic/index.js'
+export {
+  type MnemonicInput,
+  Mnemonic,
+  MnemonicError,
+  pbkdf2,
+  Words,
+} from './mnemonic/index.js'
 
 // TypeScript type exports
 export type {
@@ -245,12 +260,14 @@ export type {
   HDPrivateKeyData,
   HDPrivateKeyObject,
   HDPrivateKeyBuffers,
+  HDPrivateKeyInput,
 } from './hdprivatekey.js'
 
 export type {
   HDPublicKeyData,
   HDPublicKeyObject,
   HDPublicKeyBuffers,
+  HDPublicKeyInput,
 } from './hdpublickey.js'
 
 export type {

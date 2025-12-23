@@ -6,7 +6,12 @@
 import { Preconditions } from './util/preconditions.js'
 import { BitcoreError } from './errors.js'
 import { Base58Check } from './encoding/base58check.js'
-import { Network, get as getNetwork, defaultNetwork } from './networks.js'
+import {
+  Network,
+  get as getNetwork,
+  defaultNetwork,
+  type NetworkName,
+} from './networks.js'
 import { Hash } from './crypto/hash.js'
 import { JSUtil } from './util/js.js'
 import { PublicKey } from './publickey.js'
@@ -22,7 +27,7 @@ export interface AddressData {
 export interface AddressObject {
   hash: string
   type: string
-  network: string
+  network: NetworkName
 }
 
 export interface CashAddressDecoding {
@@ -48,10 +53,12 @@ export class Address {
   readonly network!: Network
   readonly type!: string
 
-  constructor(data?: AddressInput, network?: Network | string, type?: string) {
-    if (Array.isArray(data) && typeof network === 'number') {
-      return Address.createMultisig(data as PublicKey[], network, type)
-    }
+  constructor(
+    data?: AddressInput,
+    network?: Network | NetworkName,
+    type?: string,
+  ) {
+    // NOTE: Use `Address.createMultisig` for multisig addresses
 
     if (data instanceof Address) {
       // Immutable instance
@@ -108,7 +115,7 @@ export class Address {
 
   private _classifyArguments(
     data: AddressInput,
-    network: Network | string,
+    network: Network | NetworkName,
     type?: string,
     networkExplicitlyProvided: boolean = true,
   ): AddressData {
@@ -152,7 +159,6 @@ export class Address {
         type,
       )
     } else if (Array.isArray(data)) {
-      // This case is handled in constructor for multisig
       throw new Error(
         'Multisig addresses should be created with createMultisig',
       )
@@ -191,7 +197,7 @@ export class Address {
    */
   private static _transformString(
     data: string,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): AddressData {
     if (typeof data !== 'string') {
@@ -249,7 +255,7 @@ export class Address {
    */
   private static _transformLegacyString(
     data: string,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): AddressData {
     const info: AddressData = {}
@@ -282,7 +288,7 @@ export class Address {
    */
   private static _transformXAddressString(
     data: string,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): AddressData {
     if (typeof network === 'string') {
@@ -386,7 +392,7 @@ export class Address {
    */
   private static _transformBuffer(
     buffer: Buffer | Uint8Array,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): AddressData {
     const info: AddressData = {}
@@ -443,7 +449,7 @@ export class Address {
    */
   private static _transformScript(
     script: Script,
-    network?: Network | string,
+    network?: Network | NetworkName,
   ): AddressData {
     Preconditions.checkArgument(
       script instanceof Script,
@@ -462,17 +468,10 @@ export class Address {
     if (typeof network === 'string') {
       network = getNetwork(network)
     }
-    // if we have a network object and the network doesn't
-    // match the address network, throw an error
-    if (network && network !== address.network) {
-      throw new TypeError(
-        'Provided network does not match the Address network.',
-      )
-    }
 
     return {
       hashBuffer: address.hashBuffer,
-      network: address.network,
+      network: network || address.network,
       type: address.type,
     }
   }
@@ -505,7 +504,7 @@ export class Address {
   static createMultisig(
     publicKeys: PublicKey[],
     threshold: number,
-    network?: Network | string,
+    network?: Network | NetworkName,
   ): Address {
     const networkObj = network || publicKeys[0].network || defaultNetwork
     return Address.payingTo(
@@ -517,7 +516,10 @@ export class Address {
   /**
    * Create address from public key
    */
-  static fromPublicKey(data: PublicKey, network?: Network | string): Address {
+  static fromPublicKey(
+    data: PublicKey,
+    network?: Network | NetworkName,
+  ): Address {
     const networkObj = getNetwork(network!) || defaultNetwork
     const info = Address._transformPublicKey(data, networkObj)
     return new Address(info.hashBuffer, info.network, info.type)
@@ -526,7 +528,10 @@ export class Address {
   /**
    * Create address from public key hash
    */
-  static fromPublicKeyHash(hash: Buffer, network?: Network | string): Address {
+  static fromPublicKeyHash(
+    hash: Buffer,
+    network?: Network | NetworkName,
+  ): Address {
     const networkObj = getNetwork(network!) || defaultNetwork
     return new Address(hash, networkObj, Address.PayToPublicKeyHash)
   }
@@ -534,7 +539,10 @@ export class Address {
   /**
    * Create address from script hash
    */
-  static fromScriptHash(hash: Buffer, network?: Network | string): Address {
+  static fromScriptHash(
+    hash: Buffer,
+    network?: Network | NetworkName,
+  ): Address {
     const networkObj = getNetwork(network!) || defaultNetwork
     return new Address(hash, networkObj, Address.PayToScriptHash)
   }
@@ -550,7 +558,7 @@ export class Address {
    */
   static fromTaprootCommitment(
     commitment: PublicKey | Buffer,
-    network?: Network | string,
+    network: Network | NetworkName,
   ): Address {
     const networkObj = getNetwork(network!) || defaultNetwork
     const commitmentBuf =
@@ -570,7 +578,7 @@ export class Address {
    */
   static fromBuffer(
     buffer: Buffer,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): Address {
     const info = Address._transformBuffer(buffer, network, type)
@@ -582,7 +590,7 @@ export class Address {
    * contains the `hashBuffer`, `network`, and `type` parameters to instantiate the
    * new `Address` object.
    */
-  static fromString(str: string, network?: Network | string): Address {
+  static fromString(str: string, network?: Network | NetworkName): Address {
     const info = Address._transformString(str, network)
     return new Address(info.hashBuffer, info.network, info.type)
   }
@@ -604,7 +612,7 @@ export class Address {
    * of the following types: p2pkh input, p2pkh output, p2sh input
    * or p2sh output.
    */
-  static fromScript(script: Script, network?: Network | string): Address {
+  static fromScript(script: Script, network?: Network | NetworkName): Address {
     Preconditions.checkArgument(
       script instanceof Script,
       'script',
@@ -618,7 +626,7 @@ export class Address {
    * Builds a p2sh address paying to script. This will hash the script and
    * use that to create the address.
    */
-  static payingTo(script: Script, network?: Network | string): Address {
+  static payingTo(script: Script, network?: Network | NetworkName): Address {
     Preconditions.checkArgument(script !== null, 'script', 'script is required')
     Preconditions.checkArgument(
       script instanceof Script,
@@ -637,7 +645,7 @@ export class Address {
    */
   static getValidationError(
     data: AddressInput,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): Error | null {
     try {
@@ -653,7 +661,7 @@ export class Address {
    */
   static isValid(
     data: AddressInput,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): boolean {
     return !Address.getValidationError(data, network, type)
@@ -724,7 +732,7 @@ export class Address {
   /**
    * Wrapper method for `Address.toXAddress` method
    */
-  toString(network?: Network | string): string {
+  toString(network?: Network | NetworkName): string {
     /* const version = this.network[this.type as keyof Network] as number
     const payload = Buffer.concat([Buffer.from([version]), this.hashBuffer])
     return Base58Check.encode(payload) */
@@ -749,7 +757,7 @@ export class Address {
   /**
    * Will return an X address string
    */
-  toXAddress(network?: Network | string): string {
+  toXAddress(network?: Network | NetworkName): string {
     // For Taproot addresses, XAddress encodes only the 33-byte commitment,
     // not the full script. This matches lotusd's implementation.
     // Reference: lotusd/src/addresses/xaddress.cpp:175-180

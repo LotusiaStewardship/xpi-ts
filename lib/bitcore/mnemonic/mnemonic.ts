@@ -9,7 +9,7 @@ import { Random } from '../crypto/random.js'
 import { Preconditions } from '../util/preconditions.js'
 import { BitcoreError } from '../errors.js'
 import { HDPrivateKey } from '../hdprivatekey.js'
-import { Network } from '../networks.js'
+import { Network, type NetworkName } from '../networks.js'
 import { pbkdf2 } from './pbkdf2.js'
 import { MnemonicError, MnemonicErrorType } from './errors.js'
 import { Words } from './words/index.js'
@@ -23,6 +23,11 @@ function normalizeUnicode(str: string): string {
   // In a production environment, you might want to use a proper Unicode normalization library
   return str.normalize('NFKD')
 }
+
+/**
+ * Type definition for the input data to the Mnemonic constructor.
+ */
+export type MnemonicInput = string | Buffer | number | string[]
 
 /**
  * This is an immutable class that represents a BIP39 Mnemonic code.
@@ -40,7 +45,7 @@ function normalizeUnicode(str: string): string {
  * var mnemonic = new Mnemonic(Mnemonic.Words.ENGLISH);
  * var xprivkey = mnemonic.toHDPrivateKey();
  *
- * @param {*=} data - a seed, phrase, or entropy to initialize (can be skipped)
+ * @param {MnemonicInput} data - a seed, phrase, or entropy to initialize (can be skipped)
  * @param {Array=} wordlist - the wordlist to generate mnemonics from
  * @returns {Mnemonic} A new instance of Mnemonic
  * @constructor
@@ -49,7 +54,7 @@ export class Mnemonic {
   public readonly wordlist: string[]
   public readonly phrase: string
 
-  constructor(data?: Buffer | string | number | string[], wordlist?: string[]) {
+  constructor(data?: MnemonicInput, wordlist?: string[]) {
     if (Array.isArray(data)) {
       wordlist = data
       data = undefined
@@ -227,7 +232,7 @@ export class Mnemonic {
    */
   toHDPrivateKey(
     passphrase?: string,
-    network?: string | Network,
+    network?: Network | NetworkName,
   ): HDPrivateKey {
     const seed = this.toSeed(passphrase)
     return HDPrivateKey.fromSeed(seed, network)

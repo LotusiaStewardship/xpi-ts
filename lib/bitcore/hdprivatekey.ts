@@ -12,7 +12,7 @@ import {
   Network,
   get as getNetwork,
   defaultNetwork,
-  Networks,
+  type NetworkName,
 } from './networks.js'
 import { Hash } from './crypto/hash.js'
 import { Random } from './crypto/random.js'
@@ -33,7 +33,7 @@ export interface HDPrivateKeyData {
 
 export interface HDPrivateKeyObject {
   xprivkey: string
-  network: string
+  network: NetworkName
   depth: number
   parentFingerPrint: string
   childIndex: number
@@ -51,6 +51,14 @@ export interface HDPrivateKeyBuffers {
   checksum?: Buffer
   xprivkey?: Buffer
 }
+
+export type HDPrivateKeyInput =
+  | string
+  | Buffer
+  | HDPrivateKeyData
+  | HDPrivateKeyObject
+  | Network
+  | NetworkName
 
 export class HDPrivateKey {
   readonly privateKey!: PrivateKey
@@ -70,30 +78,51 @@ export class HDPrivateKey {
   static readonly MaxIndex = 2 * HDPrivateKey.Hardened
   static readonly RootElementAlias = ['m', 'M', "m'", "M'"]
 
-  constructor(data?: string | Buffer | HDPrivateKeyData | HDPrivateKeyObject) {
+  constructor(data?: HDPrivateKeyInput, network?: Network | NetworkName) {
     if (data instanceof HDPrivateKey) {
       return data
     }
 
-    if (data === undefined) {
-      data = HDPrivateKey._getRandomData()
+    // If data is a network name/object, generate random key for that network
+    if (
+      data === undefined ||
+      (typeof data === 'string' && getNetwork(data)) ||
+      data instanceof Network
+    ) {
+      const targetNetwork = data
+        ? getNetwork(data)
+        : network
+          ? getNetwork(network)
+          : undefined
+      data = HDPrivateKey._getRandomData(targetNetwork)
     }
 
     const info = this._classifyArguments(data)
+
+    // Override network if explicitly provided
+    if (network && info.network) {
+      const resolvedNetwork = getNetwork(network)
+      if (resolvedNetwork) {
+        info.network = resolvedNetwork
+        // Also update the privateKey's network if it exists
+        if (info.privateKey) {
+          info.privateKey = new PrivateKey(info.privateKey.bn, resolvedNetwork)
+        }
+      }
+    }
+
     this._buildFromObject(info)
   }
 
   get hdPublicKey(): HDPublicKey {
-    return this._hdPublicKey!
+    return this._hdPublicKey
   }
 
   get xpubkey(): Buffer {
-    return this._hdPublicKey!.xpubkey
+    return this._hdPublicKey.xpubkey
   }
 
-  private _classifyArguments(
-    data: string | Buffer | HDPrivateKeyData | HDPrivateKeyObject,
-  ): HDPrivateKeyData {
+  private _classifyArguments(data: HDPrivateKeyInput): HDPrivateKeyData {
     if (typeof data === 'string') {
       return HDPrivateKey._transformString(data)
     } else if (Buffer.isBuffer(data)) {
@@ -175,23 +204,31 @@ export class HDPrivateKey {
     }
   }
 
-  private static _getRandomData(): HDPrivateKeyData {
+  private static _getRandomData(network?: Network): HDPrivateKeyData {
     const seed = Random.getRandomBuffer(64)
-    return HDPrivateKey._fromSeed(seed)
+    return HDPrivateKey._fromSeed(seed, network)
   }
 
-  private static _fromSeed(seed: Buffer): HDPrivateKeyData {
+  private static _fromSeed(
+    seed: Buffer,
+    network?: Network | NetworkName,
+  ): HDPrivateKeyData {
     const hash = Hash.sha512hmac(seed, Buffer.from('Bitcoin seed'))
     const privateKeyBuffer = hash.subarray(0, 32)
     const chainCode = hash.subarray(32, 64)
 
+    const resolvedNetwork = network ? getNetwork(network) : defaultNetwork
+    if (!resolvedNetwork) {
+      throw new Error('Invalid network')
+    }
+
     return {
-      network: defaultNetwork,
+      network: resolvedNetwork,
       depth: 0,
       parentFingerPrint: Buffer.alloc(4),
       childIndex: 0,
       chainCode,
-      privateKey: new PrivateKey(privateKeyBuffer, defaultNetwork),
+      privateKey: new PrivateKey(privateKeyBuffer, resolvedNetwork),
     }
   }
 
@@ -339,10 +376,7 @@ export class HDPrivateKey {
   /**
    * Check if serialized data is valid
    */
-  static isValidSerialized(
-    data: string | Buffer,
-    network?: Network | string,
-  ): boolean {
+  static isValidSerialized(data: string | Buffer): boolean {
     try {
       HDPrivateKey._transformString(
         typeof data === 'string' ? data : data.toString('hex'),
@@ -356,10 +390,7 @@ export class HDPrivateKey {
   /**
    * Get serialization error
    */
-  getSerializedError(
-    data: string | Buffer,
-    network?: Network | string,
-  ): Error | null {
+  getSerializedError(data: string | Buffer): Error | null {
     try {
       HDPrivateKey._transformString(
         typeof data === 'string' ? data : data.toString('hex'),
@@ -556,7 +587,7 @@ export class HDPrivateKey {
    * Create from buffer
    */
   static fromBuffer(arg: Buffer): HDPrivateKey {
-    return new HDPrivateKey(arg.toString('hex'))
+    return new HDPrivateKey(arg)
   }
 
   /**
@@ -578,14 +609,18 @@ export class HDPrivateKey {
    */
   static fromSeed(
     hexa: string | Buffer,
-    network?: Network | string,
+    network?: Network | NetworkName,
   ): HDPrivateKey {
     const seed = typeof hexa === 'string' ? Buffer.from(hexa, 'hex') : hexa
-    const data = HDPrivateKey._fromSeed(seed)
-    if (network) {
-      data.network = getNetwork(network) || defaultNetwork
-    }
-    return new HDPrivateKey(data)
+    return new HDPrivateKey(HDPrivateKey._fromSeed(seed, network))
+  }
+
+  /**
+   * Create a random HDPrivateKey for the specified network
+   */
+  static fromRandom(network?: Network | NetworkName): HDPrivateKey {
+    const resolvedNetwork = network ? getNetwork(network) : undefined
+    return new HDPrivateKey(HDPrivateKey._getRandomData(resolvedNetwork))
   }
 
   /**

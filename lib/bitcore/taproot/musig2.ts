@@ -24,6 +24,7 @@ import { PublicKey } from '../publickey.js'
 import { PrivateKey } from '../privatekey.js'
 import { Address } from '../address.js'
 import { Script } from '../script.js'
+import { type NetworkName } from '../networks.js'
 import { BN, Point, Hash } from '../crypto/index.js'
 import {
   musigKeyAgg,
@@ -390,7 +391,7 @@ export function isMuSigTaprootOutput(script: Script): boolean {
  */
 export function createMuSigTaprootAddress(
   signerPubKeys: PublicKey[],
-  network: string = 'livenet',
+  network?: NetworkName,
   state?: Buffer,
 ): {
   address: Address
@@ -398,10 +399,25 @@ export function createMuSigTaprootAddress(
   commitment: PublicKey
   keyAggContext: MuSigKeyAggContext
 } {
+  if (signerPubKeys.length === 0) {
+    throw new Error('At least one signer public key is required')
+  }
+  // Infer network from first key if not explicitly provided
+  const inferredNetwork = network ?? signerPubKeys[0].network.name
+  // Validate all keys match the network
+  const mismatchedKeyIndex = signerPubKeys.findIndex(
+    pubKey => pubKey.network.name !== inferredNetwork,
+  )
+  if (mismatchedKeyIndex !== -1) {
+    throw new Error(
+      `Public key network mismatch at index ${mismatchedKeyIndex}: expected '${inferredNetwork}', got '${signerPubKeys[mismatchedKeyIndex].network.name}'`,
+    )
+  }
   const result = buildMuSigTaprootKey(signerPubKeys, state)
-
-  // Create address from commitment
-  const address = Address.fromTaprootCommitment(result.commitment, network)
+  const address = Address.fromTaprootCommitment(
+    result.commitment,
+    inferredNetwork,
+  )
 
   return {
     address,

@@ -27,8 +27,12 @@ export interface TransactionSignatureObject {
 /**
  * Represents a digital signature within a transaction input, including identifying information and the signature itself.
  *
- * The `TransactionSignature` class extends the low-level cryptography `Signature` class and includes additional context,
+ * The `TransactionSignature` class wraps a low-level cryptography `Signature` class and includes additional context,
  * such as which input/output the signature is for, the signer public key, and the sighash type.
+ *
+ * CRITICAL: This class maintains automatic synchronization of the sighash type (nhashtype) between
+ * the TransactionSignature.sigtype and the inner Signature.nhashtype. This ensures that signature
+ * verification and serialization always use the correct sighash type.
  *
  * It automatically detects and parses ECDSA (DER format) and Schnorr signatures, supports serialization/deserialization,
  * and provides basic validation logic.
@@ -43,7 +47,7 @@ export interface TransactionSignatureObject {
  *   sigtype: Signature.SIGHASH_ALL,
  * });
  */
-export class TransactionSignature extends Signature {
+export class TransactionSignature {
   /** Public key of the signer */
   publicKey!: PublicKey
   /** Previous transaction id for the referenced UTXO (as Buffer) */
@@ -53,9 +57,49 @@ export class TransactionSignature extends Signature {
   /** Index of this input in the current transaction */
   inputIndex!: number
   /** Signature hash type used for this signature (see Signature.SIGHASH_*) */
-  sigtype!: number
+  private _sigtype!: number
   /** Signature value; can be Schnorr or ECDSA, as a Signature object */
-  signature!: Signature
+  private _signature!: Signature
+
+  /**
+   * Get the signature object
+   * @returns The inner Signature object
+   */
+  get signature(): Signature {
+    return this._signature
+  }
+
+  /**
+   * Set the signature object and automatically sync nhashtype
+   * @param sig The signature to set
+   */
+  set signature(sig: Signature) {
+    this._signature = sig
+    // Automatically synchronize nhashtype from sigtype
+    if (this._sigtype !== undefined) {
+      this._signature.nhashtype = this._sigtype
+    }
+  }
+
+  /**
+   * Get the sighash type
+   * @returns The sighash type value
+   */
+  get sigtype(): number {
+    return this._sigtype
+  }
+
+  /**
+   * Set the sighash type and automatically sync to inner signature
+   * @param type The sighash type value
+   */
+  set sigtype(type: number) {
+    this._sigtype = type
+    // Automatically synchronize nhashtype to inner signature
+    if (this._signature !== undefined) {
+      this._signature.nhashtype = type
+    }
+  }
 
   /**
    * Creates a new TransactionSignature instance.
@@ -64,8 +108,6 @@ export class TransactionSignature extends Signature {
    * @throws {BitcoreError} If required arguments are missing or invalid.
    */
   constructor(arg?: TransactionSignatureData | TransactionSignature) {
-    super(BN.fromNumber(0) as BN, BN.fromNumber(0) as BN)
-
     if (arg instanceof TransactionSignature) {
       return arg
     }
@@ -104,6 +146,11 @@ export class TransactionSignature extends Signature {
     this.outputIndex = arg.outputIndex
     this.inputIndex = arg.inputIndex
 
+    // CRITICAL: Set sigtype FIRST before setting signature
+    // This ensures that when signature setter is called, it will automatically
+    // synchronize nhashtype to the inner signature object
+    this._sigtype = arg.sigtype
+
     // Parse signature with proper Schnorr/ECDSA detection
     if (arg.signature instanceof Signature) {
       this.signature = arg.signature
@@ -121,9 +168,7 @@ export class TransactionSignature extends Signature {
         const parsed = Signature.parseSchnorrEncodedSig(arg.signature)
         const sig = new Signature(parsed.r, parsed.s)
         sig.isSchnorr = true
-        if (parsed.nhashtype) {
-          sig.nhashtype = parsed.nhashtype.readUInt8(0)
-        }
+        // Note: Do NOT set nhashtype here - let the setter synchronize it
         this.signature = sig
       } else {
         // Parse as DER-encoded ECDSA signature
@@ -142,16 +187,13 @@ export class TransactionSignature extends Signature {
         const parsed = Signature.parseSchnorrEncodedSig(buf)
         const sig = new Signature(parsed.r, parsed.s)
         sig.isSchnorr = true
-        if (parsed.nhashtype) {
-          sig.nhashtype = parsed.nhashtype.readUInt8(0)
-        }
+        // Note: Do NOT set nhashtype here - let the setter synchronize it
         this.signature = sig
       } else {
         this.signature = Signature.fromString(arg.signature)
       }
     }
 
-    this.sigtype = arg.sigtype
     return this
   }
 
