@@ -144,19 +144,13 @@ export class HDPrivateKey {
     const chainCode = buf.subarray(13, 45)
     const privateKeyBuffer = buf.subarray(46, 78) // Skip the 1-byte gap at position 45
 
-    // Check for compressed flag (should be 0x01 at position 45)
-    const compressed = buf[45] === 0x01
-
     return {
       network,
       depth,
       parentFingerPrint,
       childIndex,
       chainCode,
-      privateKey: new PrivateKey(
-        { buf: privateKeyBuffer, compressed },
-        network,
-      ),
+      privateKey: new PrivateKey(privateKeyBuffer, network),
     }
   }
 
