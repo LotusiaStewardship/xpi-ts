@@ -97,13 +97,18 @@ export class HDPrivateKey {
     if (typeof data === 'string') {
       return HDPrivateKey._transformString(data)
     } else if (Buffer.isBuffer(data)) {
-      // Check if the buffer is a valid Base58Check-encoded string
-      const str = data.toString()
-      if (HDPrivateKey.isValidSerialized(str)) {
-        return HDPrivateKey._transformSerialized(str)
-      } else {
-        return HDPrivateKey._transformBuffer(data)
+      // Try to interpret buffer as Base58Check-encoded xprivkey string first
+      // (most common case when retrieving from storage)
+      try {
+        const str = data.toString('utf8')
+        if (HDPrivateKey.isValidSerialized(str)) {
+          return HDPrivateKey._transformSerialized(str)
+        }
+      } catch (e) {
+        // If UTF-8 decoding or validation fails, fall through to raw buffer handling
       }
+      // If not a valid Base58Check string, treat as raw 78-byte BIP32 buffer
+      return HDPrivateKey._transformBuffer(data)
     } else if (typeof data === 'object' && data !== null) {
       if ('xprivkey' in data) {
         return HDPrivateKey._transformObject(data as HDPrivateKeyObject)
