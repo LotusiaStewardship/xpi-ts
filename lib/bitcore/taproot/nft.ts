@@ -38,7 +38,7 @@ import {
 } from '../transaction/unspentoutput.js'
 import { Signature } from '../crypto/signature.js'
 import { Address } from '../address.js'
-import { Network } from '../networks.js'
+import { Network, type NetworkName } from '../networks.js'
 
 /**
  * Standard NFT metadata structure
@@ -148,7 +148,7 @@ export interface NFTMintConfig {
   /** Optional collection hash */
   collectionHash?: Buffer
   /** Network (default: livenet) */
-  network?: Network
+  network?: Network | NetworkName
 }
 
 /**
@@ -801,7 +801,7 @@ export class NFTUtil {
     ownerKey: PublicKey,
     metadata: NFTMetadata,
     satoshis: number = 1000,
-    network?: Network,
+    network?: Network | NetworkName,
   ): NFTData {
     // Hash the metadata
     const metadataHash = NFTUtil.hashMetadata(metadata)

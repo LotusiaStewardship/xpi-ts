@@ -768,7 +768,7 @@ export function musigSigAgg(
     s: s,
     compressed: true,
     isSchnorr: true,
-    nhashtype: sighashType, // BUG FIX: Set sighash type for proper transaction serialization
+    nhashtype: sighashType, // Set sighash type for proper transaction serialization
   })
 
   // Note: The caller should verify this signature with:

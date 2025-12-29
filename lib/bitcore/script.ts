@@ -20,7 +20,7 @@ import { Hash } from './crypto/hash.js'
 import { Opcode } from './opcode.js'
 import { PublicKey } from './publickey.js'
 import { Address } from './address.js'
-import { Network } from './networks.js'
+import { Network, type NetworkName } from './networks.js'
 import { BitcoreError } from './errors.js'
 import { BufferUtil } from './util/buffer.js'
 import { Signature } from './crypto/signature.js'
@@ -995,6 +995,67 @@ export class Script {
   }
 
   /**
+   * Check if this is a Pay-To-Taproot output script (alias for isPayToTaproot)
+   * @returns True if script is P2TR output
+   */
+  isTaprootOut(): boolean {
+    return this.isPayToTaproot()
+  }
+
+  /**
+   * Check if this is a Pay-To-Taproot input script
+   *
+   * Taproot inputs can be:
+   * 1. Key-path spending: Single Schnorr signature (64 bytes + 1 byte sighash = 65 bytes)
+   * 2. Script-path spending: Signature + script + control block
+   *
+   * Detection logic:
+   * - Key-path: Single chunk with 65 bytes (Schnorr signature with sighash)
+   * - Script-path: Multiple chunks ending with control block (33+ bytes)
+   *
+   * Reference: lotusd/src/script/interpreter.cpp lines 2074-2165
+   *
+   * @returns True if script is P2TR input
+   */
+  isTaprootIn(): boolean {
+    // Taproot inputs must have at least one chunk (the signature)
+    if (this.chunks.length === 0) {
+      return false
+    }
+
+    // Key-path spending: exactly 1 chunk with 65 bytes (64-byte Schnorr + 1-byte sighash)
+    if (this.chunks.length === 1) {
+      const chunk = this.chunks[0]
+      if (chunk.buf && chunk.buf.length === 65) {
+        // Verify it looks like a Schnorr signature (64 bytes) + sighash byte
+        return true
+      }
+      return false
+    }
+
+    // Script-path spending: signature + script + control block
+    // Must have at least 3 chunks: [signature, script, control_block]
+    if (this.chunks.length >= 3) {
+      // Last chunk should be control block (33+ bytes for Taproot)
+      const lastChunk = this.chunks[this.chunks.length - 1]
+      if (lastChunk.buf && lastChunk.buf.length >= 33) {
+        // Second-to-last chunk should be the tapscript
+        const scriptChunk = this.chunks[this.chunks.length - 2]
+        if (scriptChunk.buf && scriptChunk.buf.length > 0) {
+          // First chunk(s) should be signature(s)
+          const firstChunk = this.chunks[0]
+          if (firstChunk.buf && firstChunk.buf.length > 0) {
+            return true
+          }
+        }
+      }
+      return false
+    }
+
+    return false
+  }
+
+  /**
    * Get the data part of a script, if it has one
    *
    * P2SH: The script hash
@@ -1091,7 +1152,7 @@ export class Script {
    * @param network - Optional network to use for address
    * @returns The Address object or null if not applicable
    */
-  toAddress(network?: Network | string): Address | null {
+  toAddress(network?: Network | NetworkName): Address | null {
     const info = this.getAddressInfo()
     if (!info) {
       return null
@@ -1408,6 +1469,7 @@ export class Script {
    */
   classifyOutput(): string {
     const outputIdentifiers: { [key: string]: () => boolean } = {
+      TAPROOT_OUT: this.isTaprootOut.bind(this),
       PUBKEY_OUT: this.isPublicKeyOut.bind(this),
       PUBKEYHASH_OUT: this.isPublicKeyHashOut.bind(this),
       MULTISIG_OUT: this.isMultisigOut.bind(this),
@@ -1429,6 +1491,7 @@ export class Script {
    */
   classifyInput(): string {
     const inputIdentifiers: { [key: string]: () => boolean } = {
+      TAPROOT_IN: this.isTaprootIn.bind(this),
       PUBKEY_IN: this.isPublicKeyIn.bind(this),
       PUBKEYHASH_IN: this.isPublicKeyHashIn.bind(this),
       MULTISIG_IN: this.isMultisigIn.bind(this),
@@ -1726,6 +1789,14 @@ export const ScriptTypes = {
    */
   UNKNOWN: 'Unknown',
   /**
+   * Pay to Taproot (33-byte commitment, with or without state)
+   */
+  TAPROOT_OUT: 'Pay to Taproot',
+  /**
+   * Spend from Taproot (key-path or script-path)
+   */
+  TAPROOT_IN: 'Spend from Taproot',
+  /**
    * Pay to public key
    */
   PUBKEY_OUT: 'Pay to public key',
@@ -1763,7 +1834,10 @@ export const ScriptTypes = {
  * @param network - The network to use for address
  * @returns The address object
  */
-export function toAddress(script: Script, network: string): Address {
+export function toAddress(
+  script: Script,
+  network: Network | NetworkName,
+): Address {
   const addr = script.toAddress(network)
   if (!addr || typeof addr === 'boolean') {
     throw new Error('Cannot convert script to address')

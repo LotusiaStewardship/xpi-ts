@@ -9,7 +9,7 @@ import { Base58 } from './encoding/base58.js'
 import { Base58Check } from './encoding/base58check.js'
 import { BufferReader } from './encoding/bufferreader.js'
 import { BufferWriter } from './encoding/bufferwriter.js'
-import { Network, Networks } from './networks.js'
+import { Network, type NetworkName, Networks } from './networks.js'
 import { Hash } from './crypto/hash.js'
 import { JSUtil } from './util/js.js'
 import { BufferUtil } from './util/buffer.js'
@@ -77,7 +77,7 @@ export interface XAddressObject {
    * The network identifier of the address (e.g., 'livenet', 'testnet', or 'regtest').
    * This corresponds to the network character in the address.
    */
-  network: string
+  network: NetworkName
 
   /**
    * The prefix of the address, which is the part before the network character.
@@ -109,7 +109,7 @@ export class XAddress {
 
   constructor(
     data?: XAddressInput,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
     prefix: string = TOKEN_NAME,
   ) {
@@ -182,7 +182,7 @@ export class XAddress {
    */
   private _classifyArguments(
     data: XAddressInput,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
     prefix?: string,
     networkExplicitlyProvided: boolean = true,
@@ -256,7 +256,7 @@ export class XAddress {
    */
   private static _transformString(
     data: string,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): XAddressData {
     if (typeof data !== 'string') {
@@ -285,7 +285,7 @@ export class XAddress {
    */
   private static _transformBuffer(
     buffer: Buffer | Uint8Array,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
     prefix: string = TOKEN_NAME,
   ): XAddressData {
@@ -316,7 +316,7 @@ export class XAddress {
    */
   static fromString(
     str: string,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): XAddress {
     const info = XAddress._transformString(str, network, type)
@@ -340,7 +340,7 @@ export class XAddress {
    */
   static getValidationError(
     data: XAddressInput,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): Error | null {
     try {
@@ -356,7 +356,7 @@ export class XAddress {
    */
   static isValid(
     data: XAddressInput,
-    network?: Network | string,
+    network?: Network | NetworkName,
     type?: string,
   ): boolean {
     return !XAddress.getValidationError(data, network, type)
@@ -405,10 +405,9 @@ export class XAddress {
   toXAddress(): string {
     const prefix = this.prefix
     const networkChar = getNetworkChar(this.network)
-    const networkByte = Buffer.from(networkChar)
     const typeByte = Buffer.from([getTypeByte(this.type)])
     const payload = this.hashBuffer
-    const checksum = createChecksum(prefix, networkByte, typeByte, payload)
+    const checksum = createChecksum(prefix, networkChar, typeByte, payload)
     const encodedPayload = encodePayload(typeByte, payload, checksum)
     return prefix + networkChar + encodedPayload
   }
@@ -452,13 +451,13 @@ export class XAddress {
 
 function createChecksum(
   prefix: string,
-  networkByte: Buffer,
+  networkChar: string,
   typeByte: Buffer,
   payload: Buffer,
 ): Buffer {
   const data = BufferUtil.concat([
     Buffer.from(prefix),
-    networkByte,
+    Buffer.from(networkChar),
     typeByte,
     payload,
   ])
@@ -467,14 +466,14 @@ function createChecksum(
 
 function createChecksumLegacy(
   prefix: string,
-  networkByte: Buffer,
+  networkChar: string,
   typeByte: Buffer,
   payload: Buffer,
 ): Buffer {
   const bw = new BufferWriter()
   bw.writeVarintNum(prefix.length)
   bw.write(Buffer.from(prefix))
-  bw.writeUInt8(networkByte[0])
+  bw.writeUInt8(networkChar.charCodeAt(0))
   bw.writeUInt8(typeByte[0])
   bw.writeVarintNum(payload.length)
   bw.write(payload)
@@ -573,17 +572,16 @@ function decode(address: string): XAddressData {
 
   const prefix = address.substring(0, splitLocation)
   const networkChar = address.substring(splitLocation, splitLocation + 1)
-  const networkByte = Buffer.from(networkChar)
   const encodedPayload = address.substring(splitLocation + 1)
   const decodedBytes = Base58.decode(encodedPayload)
   const typeByte = decodedBytes.subarray(0, 1)
   const payload = decodedBytes.subarray(1, decodedBytes.length - 4)
   const decodedChecksum = decodedBytes.subarray(decodedBytes.length - 4)
 
-  const checksum = createChecksum(prefix, networkByte, typeByte, payload)
+  const checksum = createChecksum(prefix, networkChar, typeByte, payload)
   /* const legacyChecksum = createChecksumLegacy(
     prefix,
-    networkByte,
+    networkChar,
     typeByte,
     payload,
   ) */

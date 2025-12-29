@@ -7,7 +7,12 @@ import { BN } from './crypto/bn.js'
 import { Point } from './crypto/point.js'
 import { Hash } from './crypto/hash.js'
 import { JSUtil } from './util/js.js'
-import { Network, get as getNetwork, defaultNetwork } from './networks.js'
+import {
+  Network,
+  get as getNetwork,
+  defaultNetwork,
+  type NetworkName,
+} from './networks.js'
 import { PrivateKey } from './privatekey.js'
 import { Address } from './address.js'
 
@@ -18,7 +23,7 @@ export interface PublicKeyData {
 }
 
 export interface PublicKeyExtra {
-  network?: Network | string
+  network?: Network | NetworkName
   compressed?: boolean
 }
 
@@ -381,7 +386,7 @@ export class PublicKey {
   /**
    * Will return an address for the public key
    */
-  toAddress(network?: Network | string): Address {
+  toAddress(network?: Network | NetworkName): Address {
     return Address.fromPublicKey(this, network)
   }
 

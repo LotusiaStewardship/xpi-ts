@@ -12,7 +12,7 @@ import {
   Network,
   get as getNetwork,
   defaultNetwork,
-  Networks,
+  type NetworkName,
 } from './networks.js'
 import { PublicKey } from './publickey.js'
 import { Address } from './address.js'
@@ -54,12 +54,12 @@ export class PrivateKey {
   readonly network!: Network
   private _pubkey?: PublicKey
 
-  constructor(data?: PrivateKeyInput, network?: Network | string) {
+  constructor(data?: PrivateKeyInput, network?: Network | NetworkName) {
     if (data instanceof PrivateKey) {
       return data
     }
 
-    const info = this._classifyArguments(data!, network)
+    const info = this._classifyArguments(data, network)
 
     // Validation
     if (!info.bn || info.bn.isZero()) {
@@ -90,12 +90,12 @@ export class PrivateKey {
    * different kinds of arguments passed to the constructor.
    */
   private _classifyArguments(
-    data: PrivateKeyInput,
-    network?: Network | string,
+    data?: PrivateKeyInput,
+    network?: Network | NetworkName,
   ): PrivateKeyData {
     const info: PrivateKeyData = {
       compressed: true,
-      network: network ? getNetwork(network) || defaultNetwork : defaultNetwork,
+      network: network ? getNetwork(network) : defaultNetwork,
     }
 
     // Detect type of data
@@ -124,7 +124,7 @@ export class PrivateKey {
       Object.assign(info, objectInfo)
     } else if (!network && typeof data === 'string' && getNetwork(data)) {
       info.bn = PrivateKey._getRandomBN()
-      info.network = getNetwork(data)!
+      info.network = getNetwork(data)
     } else if (typeof data === 'string') {
       if (JSUtil.isHexa(data)) {
         info.bn = new BN(data, 16)
@@ -155,7 +155,7 @@ export class PrivateKey {
    */
   private static _transformBuffer(
     buf: Buffer,
-    network?: Network | string,
+    network?: Network | NetworkName,
   ): PrivateKeyData {
     const info: PrivateKeyData = {}
 
@@ -172,7 +172,7 @@ export class PrivateKey {
 
     if (network) {
       const specifiedNetwork = getNetwork(network)
-      if (specifiedNetwork && info.network !== specifiedNetwork) {
+      if (specifiedNetwork && info.network.name !== specifiedNetwork.name) {
         // Allow testnet/regtest compatibility since they use the same private key prefix
         const isCompatible =
           (info.network.name === 'testnet' &&
@@ -207,7 +207,7 @@ export class PrivateKey {
    */
   private static _transformBNBuffer(
     buf: Buffer,
-    network?: Network | string,
+    network?: Network | NetworkName,
   ): PrivateKeyData {
     network ||= defaultNetwork
     return {
@@ -222,7 +222,7 @@ export class PrivateKey {
    */
   private static _transformWIF(
     str: string,
-    network?: Network | string,
+    network?: Network | NetworkName,
   ): PrivateKeyData {
     return PrivateKey._transformBuffer(Base58Check.decode(str), network)
   }
@@ -233,9 +233,12 @@ export class PrivateKey {
   private static _transformObject(json: PrivateKeyObject): PrivateKeyData {
     const bn = new BN(json.bn, 16)
     const network = getNetwork(json.network)
+    if (!network) {
+      throw new Error(`Invalid network: ${json.network}`)
+    }
     return {
       bn: bn,
-      network: network || defaultNetwork,
+      network: network,
       compressed: json.compressed,
     }
   }
@@ -243,14 +246,14 @@ export class PrivateKey {
   /**
    * Instantiate a PrivateKey from a Buffer with the DER or WIF representation
    */
-  static fromBuffer(arg: Buffer, network?: Network | string): PrivateKey {
+  static fromBuffer(arg: Buffer, network?: Network | NetworkName): PrivateKey {
     return new PrivateKey(arg, network)
   }
 
   /**
    * Instantiate a PrivateKey from a WIF string
    */
-  static fromString(str: string, network?: Network | string): PrivateKey {
+  static fromString(str: string, network?: Network | NetworkName): PrivateKey {
     if (typeof str !== 'string') {
       throw new Error('First argument is expected to be a string.')
     }
@@ -260,10 +263,10 @@ export class PrivateKey {
   /**
    * Instantiate a PrivateKey from a WIF string (alias for fromString)
    * Automatically detects compressed vs uncompressed WIF format
-   * Always uses Lotus network for consistency
+   * Network is detected from the WIF format; explicit network parameter is optional
    */
-  static fromWIF(str: string, network?: Network | string): PrivateKey {
-    return PrivateKey.fromString(str, network ?? defaultNetwork)
+  static fromWIF(str: string, network?: Network | NetworkName): PrivateKey {
+    return PrivateKey.fromString(str, network)
   }
 
   /**
@@ -271,7 +274,7 @@ export class PrivateKey {
    */
   static fromObject(
     obj: PrivateKeyObject,
-    network?: Network | string,
+    network?: Network | NetworkName,
   ): PrivateKey {
     if (typeof obj !== 'object') {
       throw new Error('First argument is expected to be an object.')
@@ -282,7 +285,7 @@ export class PrivateKey {
   /**
    * Instantiate a PrivateKey from random bytes
    */
-  static fromRandom(network?: Network | string): PrivateKey {
+  static fromRandom(network?: Network | NetworkName): PrivateKey {
     const bn = PrivateKey._getRandomBN()
     return new PrivateKey(bn, network)
   }
@@ -292,7 +295,7 @@ export class PrivateKey {
    */
   static getValidationError(
     data: PrivateKeyInput,
-    network?: Network | string,
+    network?: Network | NetworkName,
   ): Error | null {
     try {
       new PrivateKey(data, network)
@@ -305,7 +308,10 @@ export class PrivateKey {
   /**
    * Check if the parameters are valid
    */
-  static isValid(data: PrivateKeyInput, network?: Network | string): boolean {
+  static isValid(
+    data: PrivateKeyInput,
+    network?: Network | NetworkName,
+  ): boolean {
     if (!data) {
       return false
     }
@@ -378,7 +384,7 @@ export class PrivateKey {
    * @param network - optional parameter specifying the desired network for the address
    * @returns An address generated from the private key
    */
-  toAddress(network?: Network | string): Address {
+  toAddress(network?: Network | NetworkName): Address {
     const pubkey = this.toPublicKey()
     return Address.fromPublicKey(pubkey, network ?? this.network.name)
   }

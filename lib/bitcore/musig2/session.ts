@@ -741,7 +741,7 @@ export class MuSigSessionManager {
     }
 
     // Get sighash type from metadata (defaults to SIGHASH_ALL | SIGHASH_LOTUS for Taproot)
-    // BUG FIX: This nhashtype will be embedded in the signature for proper transaction serialization
+    // This nhashtype will be embedded in the signature for proper transaction serialization
     const sighashType = session.metadata?.sighashType
       ? (session.metadata.sighashType as number)
       : session.metadata?.inputScriptType === 'taproot'

@@ -912,13 +912,11 @@ export class Transaction {
     signingMethod?: SignatureSigningMethod,
   ): Transaction {
     const privKeys = Array.isArray(privateKey) ? privateKey : [privateKey]
-    const sigtypeDefault =
-      sigtype || Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID
 
     for (const privKey of privKeys) {
       const signatures = this.getSignatures(
         privKey,
-        sigtypeDefault,
+        sigtype || undefined,
         signingMethod,
       )
       for (const signature of signatures) {
@@ -1119,6 +1117,11 @@ export class Transaction {
 
   /**
    * Get signatures for transaction
+   *
+   * Automatically detects input type and spending path, using appropriate sighash:
+   * - Taproot key-path: SIGHASH_ALL | SIGHASH_LOTUS (0x61) required
+   * - Taproot script-path: SIGHASH_ALL | SIGHASH_FORKID (0x41) default
+   * - Other inputs: SIGHASH_ALL | SIGHASH_FORKID (0x41)
    */
   getSignatures(
     privKey: PrivateKey | string,
@@ -1126,18 +1129,39 @@ export class Transaction {
     signingMethod?: string,
   ): TransactionSignature[] {
     const privateKey = new PrivateKey(privKey)
-    const sigtypeDefault =
-      sigtype || Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID
     const results: TransactionSignature[] = []
 
     const hashData = Hash.sha256ripemd160(privateKey.publicKey.toBuffer())
     for (let index = 0; index < this.inputs.length; index++) {
       const input = this.inputs[index]
+
+      // Determine sighash type based on input type and spending path
+      // If sigtype is explicitly provided, use it
+      // Otherwise, auto-detect based on input script type and spending path
+      let inputSigtype = sigtype
+      if (!inputSigtype) {
+        // Check if this is a Taproot input
+        if (input.output?.script.isPayToTaproot()) {
+          // Check if this is key-path or script-path spending
+          const taprootInput = input as TaprootInput
+          if (taprootInput.hasScriptTree()) {
+            // Script-path: can use SIGHASH_FORKID
+            inputSigtype = Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID
+          } else {
+            // Key-path: MUST use SIGHASH_LOTUS
+            inputSigtype = Signature.SIGHASH_ALL | Signature.SIGHASH_LOTUS
+          }
+        } else {
+          // Other inputs use SIGHASH_FORKID
+          inputSigtype = Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID
+        }
+      }
+
       const signatures = input.getSignatures(
         this,
         privateKey,
         index,
-        sigtypeDefault,
+        inputSigtype,
         hashData,
         signingMethod,
       )
@@ -1669,6 +1693,7 @@ export class Transaction {
       }
       clazz = TaprootInput
       // Create TaprootInput with internal key and merkle root if provided
+      // If merkleRoot is not provided, default to zero (key-path only)
       const taprootInput = new TaprootInput({
         output: new Output({
           script: unspentOutput.script,
@@ -1678,7 +1703,7 @@ export class Transaction {
         outputIndex: unspentOutput.outputIndex,
         script: new Script(),
         internalPubKey: unspentOutput.internalPubKey,
-        merkleRoot: unspentOutput.merkleRoot,
+        merkleRoot: unspentOutput.merkleRoot || Buffer.alloc(32),
       })
       this.addInput(taprootInput)
       return

@@ -6,7 +6,7 @@
 import { BN } from './crypto/bn.js'
 import { PublicKey } from './publickey.js'
 import { HDPrivateKey } from './hdprivatekey.js'
-import { Network, get as getNetwork, defaultNetwork } from './networks.js'
+import { Network, get as getNetwork, type NetworkName } from './networks.js'
 import { Hash } from './crypto/hash.js'
 import { Base58Check } from './encoding/base58check.js'
 import { JSUtil } from './util/js.js'
@@ -26,7 +26,7 @@ export interface HDPublicKeyData {
 
 export interface HDPublicKeyObject {
   xpubkey: string
-  network: string
+  network: NetworkName
   depth: number
   fingerPrint: string
   parentFingerPrint: string
@@ -47,6 +47,12 @@ export interface HDPublicKeyBuffers {
   privateKey?: Buffer
   xprivkey?: Buffer
 }
+
+export type HDPublicKeyInput =
+  | string
+  | Buffer
+  | HDPublicKeyData
+  | HDPublicKeyObject
 
 export class HDPublicKey {
   readonly xpubkey!: Buffer
@@ -94,35 +100,33 @@ export class HDPublicKey {
   static readonly ChecksumEnd =
     HDPublicKey.ChecksumStart + HDPublicKey.CheckSumSize
 
-  constructor(
-    arg: string | Buffer | HDPublicKeyData | HDPublicKeyObject | HDPrivateKey,
-  ) {
-    if (arg instanceof HDPublicKey) {
-      return arg
+  constructor(data: HDPublicKeyInput) {
+    if (data instanceof HDPublicKey) {
+      return data
     }
     if (!(this instanceof HDPublicKey)) {
-      return new HDPublicKey(arg)
+      return new HDPublicKey(data)
     }
-    if (arg) {
-      if (typeof arg === 'string' || Buffer.isBuffer(arg)) {
-        const error = HDPublicKey.getSerializedError(arg)
+    if (data) {
+      if (typeof data === 'string' || Buffer.isBuffer(data)) {
+        const error = HDPublicKey.getSerializedError(data)
         if (!error) {
-          return this._buildFromSerialized(arg)
+          return this._buildFromSerialized(data)
         } else if (
-          Buffer.isBuffer(arg) &&
-          !HDPublicKey.getSerializedError(arg.toString())
+          Buffer.isBuffer(data) &&
+          !HDPublicKey.getSerializedError(data.toString())
         ) {
-          return this._buildFromSerialized(arg.toString())
+          return this._buildFromSerialized(data.toString())
         } else {
           throw error
         }
       } else {
-        if (typeof arg === 'object' && arg !== null) {
-          if (arg instanceof HDPrivateKey) {
-            return this._buildFromPrivate(arg)
+        if (typeof data === 'object' && data !== null) {
+          if (data instanceof HDPrivateKey) {
+            return this._buildFromPrivate(data)
           } else {
             return this._buildFromObject(
-              arg as HDPublicKeyData | HDPublicKeyObject,
+              data as HDPublicKeyData | HDPublicKeyObject,
             )
           }
         } else {
@@ -327,8 +331,13 @@ export class HDPublicKey {
    * Build from HDPrivateKey
    */
   private _buildFromPrivate(arg: HDPrivateKey): HDPublicKey {
+    // Convert xprivkey version to xpubkey version
+    // The HDPrivateKey stores xprivkey version, but we need xpubkey version
+    const xpubkeyVersion = Buffer.alloc(4)
+    xpubkeyVersion.writeUInt32BE(arg.network.xpubkey, 0)
+
     const args: HDPublicKeyBuffers = {
-      version: arg._buffers.version,
+      version: xpubkeyVersion,
       depth: arg._buffers.depth,
       parentFingerPrint: arg._buffers.parentFingerPrint,
       childIndex: arg._buffers.childIndex,
@@ -336,7 +345,7 @@ export class HDPublicKey {
       publicKey: Point.pointToCompressed(
         Point.getG().mul(new BN(arg._buffers.privateKey)),
       ),
-      checksum: arg._buffers.checksum,
+      checksum: undefined, // Recalculate checksum with new version
     }
     return this._buildFromBuffers(args)
   }
@@ -404,7 +413,12 @@ export class HDPublicKey {
         throw new Error('Invalid base58 checksum')
       }
     }
-    const network = getNetwork(arg.version.readUInt32BE(0))
+    const network = getNetwork(arg.version.readUInt32BE(0), 'xpubkey')
+    if (!network) {
+      throw new Error(
+        `Invalid HDPublicKey version: 0x${arg.version.toString('hex')}`,
+      )
+    }
 
     const xpubkey = Base58Check.encode(Buffer.concat(sequence))
     arg.xpubkey = Buffer.from(xpubkey)
@@ -422,6 +436,9 @@ export class HDPublicKey {
       depth: arg.depth.readUInt8(0),
       publicKey: publicKey,
       fingerPrint: fingerPrint,
+      parentFingerPrint: arg.parentFingerPrint,
+      childIndex: arg.childIndex.readUInt32BE(0),
+      chainCode: arg.chainCode,
     })
 
     return this
@@ -456,6 +473,14 @@ export class HDPublicKey {
   private _buildFromObject(
     arg: HDPublicKeyData | HDPublicKeyObject,
   ): HDPublicKey {
+    // Resolve network first - it's required for proper version encoding
+    const network = arg.network ? getNetwork(arg.network) : undefined
+    if (!network) {
+      throw new Error(
+        'Network is required when building HDPublicKey from object',
+      )
+    }
+
     const buffers: HDPublicKeyBuffers = {
       version: Buffer.alloc(4),
       depth:
@@ -484,13 +509,8 @@ export class HDPublicKey {
       checksum: undefined, // Will be calculated automatically
     }
 
-    // Write the version as a 32-bit big-endian integer
-    if (arg.network) {
-      const network = getNetwork(arg.network)
-      if (network) {
-        buffers.version.writeUInt32BE(network.xpubkey, 0)
-      }
-    }
+    // Write the xpubkey version as a 32-bit big-endian integer
+    buffers.version.writeUInt32BE(network.xpubkey, 0)
 
     // Write the childIndex as a 32-bit big-endian integer
     if (typeof arg.childIndex === 'number') {

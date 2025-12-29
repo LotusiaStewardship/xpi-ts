@@ -539,8 +539,8 @@ export class Input {
     signature: TransactionSignature,
     signingMethod?: string,
   ): boolean {
-    // FIXME: Refactor signature so this is not necessary
-    signature.signature.nhashtype = signature.sigtype
+    // NOTE: nhashtype is now automatically synchronized via TransactionSignature setter
+    // No manual synchronization needed
     return verify(
       transaction as unknown as TransactionLike,
       signature.signature,
@@ -855,7 +855,8 @@ export class MultisigInput extends Input {
     signature: TransactionSignature,
     signingMethod?: string,
   ): boolean {
-    signature.signature.nhashtype = signature.sigtype
+    // NOTE: nhashtype is now automatically synchronized via TransactionSignature setter
+    // No manual synchronization needed
     return verify(
       transaction as unknown as TransactionLike,
       signature.signature,
@@ -1168,7 +1169,7 @@ export class MultisigScriptHashInput extends Input {
     signingMethod?: string,
   ): boolean {
     signingMethod = signingMethod || 'ecdsa'
-    signature.signature.nhashtype = signature.sigtype
+    // NOTE: nhashtype is now automatically synchronized via TransactionSignature setter
     return verify(
       transaction as unknown as TransactionLike,
       signature.signature,
@@ -1442,14 +1443,34 @@ export class TaprootInput extends Input {
   }
 
   /**
-   * Get signatures for key path spending
+   * Check if this input has a script tree (script-path spending)
    *
-   * Key path spending requirements:
-   * - Must use SIGHASH_LOTUS (not SIGHASH_FORKID)
-   * - Must use Schnorr signatures (not ECDSA)
-   * - Signature hash is computed using SIGHASH_LOTUS algorithm
+   * A script tree exists if merkleRoot is defined, has length 32, and is non-zero.
+   * Key-path-only outputs have a zero merkleRoot (32 zero bytes).
+   */
+  hasScriptTree(): boolean {
+    if (!this.merkleRoot || this.merkleRoot.length !== 32) {
+      return false
+    }
+    // Check if merkleRoot is non-zero (script tree exists)
+    return !this.merkleRoot.equals(Buffer.alloc(32))
+  }
+
+  /**
+   * Check if this input is key-path only (no script tree)
+   */
+  isKeyPathOnly(): boolean {
+    return !this.hasScriptTree()
+  }
+
+  /**
+   * Get signatures for Taproot spending (key-path or script-path)
    *
-   * Reference: lotusd/test/functional/logos_feature_taproot_key_spend.py
+   * Automatically detects spending path and uses appropriate sighash:
+   * - Key-path: SIGHASH_LOTUS (0x60) REQUIRED
+   * - Script-path: Any valid sighash type (FORKID or LOTUS)
+   *
+   * Reference: lotusd/src/script/interpreter.cpp lines 2074-2165
    */
   getSignatures(
     transaction: Transaction,
@@ -1457,11 +1478,8 @@ export class TaprootInput extends Input {
     index: number,
     sigtype?: number,
     hashData?: unknown,
-    signingMethod?: string,
+    signingMethod?: 'ecdsa' | 'schnorr',
   ): TransactionSignature[] {
-    sigtype = sigtype || TAPROOT_SIGHASH_TYPE
-    signingMethod = signingMethod || 'schnorr'
-
     Preconditions.checkState(
       this.output instanceof Output,
       'Output is required',
@@ -1471,22 +1489,56 @@ export class TaprootInput extends Input {
       'Output must be Pay-To-Taproot',
     )
 
-    // Taproot key path MUST use SIGHASH_LOTUS
-    sigtype ||= TAPROOT_SIGHASH_TYPE
+    // Determine spending path and validate sighash type
+    const isKeyPath = this.isKeyPathOnly()
 
-    // Validate that SIGHASH_LOTUS is being used
-    if ((sigtype & 0x60) !== Signature.SIGHASH_LOTUS) {
-      throw new Error(
-        'Taproot key spend signatures must use "SIGHASH_ALL | SIGHASH_LOTUS" (0x61)',
+    if (isKeyPath) {
+      // Key-path spending MUST use SIGHASH_LOTUS
+      sigtype = sigtype || TAPROOT_SIGHASH_TYPE
+      if ((sigtype & 0x60) !== Signature.SIGHASH_LOTUS) {
+        throw new Error(
+          'Taproot key spend signatures must use "SIGHASH_ALL | SIGHASH_LOTUS" (0x61)',
+        )
+      }
+      signingMethod = signingMethod || 'schnorr'
+      if (signingMethod !== 'schnorr') {
+        throw new Error('Taproot key spend signature must be Schnorr')
+      }
+
+      return this._getKeyPathSignatures(
+        transaction,
+        privateKey,
+        index,
+        sigtype,
+        signingMethod,
+      )
+    } else {
+      // Script-path spending: any valid sighash type (FORKID or LOTUS)
+      // Default to SIGHASH_FORKID for script-path
+      sigtype = sigtype || Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID
+      signingMethod = signingMethod || 'schnorr'
+
+      return this._getScriptPathSignatures(
+        transaction,
+        privateKey,
+        index,
+        sigtype,
+        signingMethod,
       )
     }
+  }
 
-    // Taproot key path MUST use Schnorr
-    signingMethod ||= 'schnorr'
-    if (signingMethod !== 'schnorr') {
-      throw new Error('Taproot key spend signature must be Schnorr')
-    }
-
+  /**
+   * Get signatures for key-path spending
+   * @private
+   */
+  private _getKeyPathSignatures(
+    transaction: Transaction,
+    privateKey: PrivateKey,
+    index: number,
+    sigtype: number,
+    signingMethod: 'ecdsa' | 'schnorr',
+  ): TransactionSignature[] {
     // Taproot key path spending ALWAYS requires tweaking the private key
     // The signature must verify against the commitment (tweaked pubkey) in the scriptPubKey
     // Reference: lotusd/src/script/interpreter.cpp VerifyTaprootSpend()
@@ -1518,29 +1570,85 @@ export class TaprootInput extends Input {
   }
 
   /**
-   * Add signature to input (key path spending)
+   * Get signatures for script-path spending
+   * @private
+   */
+  private _getScriptPathSignatures(
+    transaction: Transaction,
+    privateKey: PrivateKey,
+    index: number,
+    sigtype: number,
+    signingMethod: 'ecdsa' | 'schnorr',
+  ): TransactionSignature[] {
+    // For script-path spending, we sign with the internal private key (not tweaked)
+    // The script execution will verify the merkle commitment
+    const signature = sign(
+      transaction as unknown as TransactionLike,
+      privateKey,
+      sigtype,
+      index,
+      this.tapScript || this.output!.script,
+      new BN(this.output!.satoshis.toString()),
+      undefined,
+      signingMethod,
+    )
+
+    return [
+      new TransactionSignature({
+        publicKey: privateKey.publicKey,
+        prevTxId: this.prevTxId,
+        outputIndex: this.outputIndex,
+        inputIndex: index,
+        signature: signature,
+        sigtype: sigtype,
+      }),
+    ]
+  }
+
+  /**
+   * Add signature to input (key-path or script-path spending)
+   *
+   * Automatically detects spending path and builds appropriate witness:
+   * - Key-path: witness = [signature]
+   * - Script-path: witness = [signature, script, control_block]
    */
   addSignature(
     transaction: Transaction,
     signature: TransactionSignature,
-    signingMethod?: string,
+    signingMethod?: 'ecdsa' | 'schnorr',
   ): this {
     Preconditions.checkState(
       this.isValidSignature(transaction, signature, signingMethod),
       'Signature is invalid',
     )
 
-    // For key path spending, input script is just the signature
     const script = new Script()
 
-    // BUG FIX: Ensure inner signature has nhashtype set from TransactionSignature.sigtype
-    // This is a defensive measure to prevent malformed signatures if the inner signature
-    // doesn't have nhashtype set (e.g., from MuSig2 aggregation)
-    if (!signature.signature.nhashtype && signature.sigtype) {
-      signature.signature.nhashtype = signature.sigtype
-    }
+    // NOTE: nhashtype is now automatically synchronized via TransactionSignature setter
+    // No defensive measure needed - the setter ensures nhashtype is always in sync
 
-    script.add(signature.signature.toTxFormat('schnorr'))
+    if (this.isKeyPathOnly()) {
+      // Key-path spending: input script is just the signature
+      script.add(signature.signature.toTxFormat('schnorr'))
+    } else {
+      // Script-path spending: input script is [signature, script, control_block]
+      script.add(signature.signature.toTxFormat('schnorr'))
+
+      // Add the tapscript
+      if (this.tapScript) {
+        script.add(this.tapScript.toBuffer())
+      }
+
+      // Add the control block
+      if (this.controlBlock) {
+        script.add(this.controlBlock)
+      } else {
+        throw new Error(
+          'Script-path spending requires control block. ' +
+            'Use buildScriptPathTaproot() to create output with script tree.',
+        )
+      }
+    }
 
     this.setScript(script)
     return this
@@ -1552,7 +1660,7 @@ export class TaprootInput extends Input {
   isValidSignature(
     transaction: Transaction,
     signature: TransactionSignature,
-    signingMethod?: string,
+    signingMethod?: 'ecdsa' | 'schnorr',
   ): boolean {
     Preconditions.checkState(
       this.output instanceof Output,
