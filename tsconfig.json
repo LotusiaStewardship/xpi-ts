@@ -15,9 +15,9 @@
   ],
   "compilerOptions": {
     "rootDir": ".",
-    "outDir": "./dist",
-    "declaration": true,
-    "declarationMap": true,
+    "outDir": "./dist/esm",
+    "declaration": false,
+    "declarationMap": false,
     "removeComments": true,
     "esModuleInterop": true,
     "allowJs": true,
