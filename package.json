@@ -2,44 +2,44 @@
   "name": "xpi-ts",
   "version": "0.2.12",
   "description": "Bitcore-compatible wallet SDK for Lotus",
-  "main": "./dist/cjs/index.cjs",
+  "main": "./dist/cjs/index.js",
   "module": "./dist/esm/index.js",
   "types": "./dist/types/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.cjs"
+      "require": "./dist/cjs/index.js"
     },
     "./lib/bitcore": {
       "types": "./dist/types/lib/bitcore/index.d.ts",
       "import": "./dist/esm/lib/bitcore/index.js",
-      "require": "./dist/cjs/lib/bitcore/index.cjs"
+      "require": "./dist/cjs/lib/bitcore/index.js"
     },
     "./lib/bitcore/*": {
       "types": "./dist/types/lib/bitcore/*.d.ts",
       "import": "./dist/esm/lib/bitcore/*.js",
-      "require": "./dist/cjs/lib/bitcore/*.cjs"
+      "require": "./dist/cjs/lib/bitcore/*.js"
     },
     "./lib/rank": {
       "types": "./dist/types/lib/rank/index.d.ts",
       "import": "./dist/esm/lib/rank/index.js",
-      "require": "./dist/cjs/lib/rank/index.cjs"
+      "require": "./dist/cjs/lib/rank/index.js"
     },
     "./lib/rank/*": {
       "types": "./dist/types/lib/rank/*.d.ts",
       "import": "./dist/esm/lib/rank/*.js",
-      "require": "./dist/cjs/lib/rank/*.cjs"
+      "require": "./dist/cjs/lib/rank/*.js"
     },
     "./lib/*": {
       "types": "./dist/types/lib/*.d.ts",
       "import": "./dist/esm/lib/*.js",
-      "require": "./dist/cjs/lib/*.cjs"
+      "require": "./dist/cjs/lib/*.js"
     },
     "./utils/*": {
       "types": "./dist/types/utils/*.d.ts",
       "import": "./dist/esm/utils/*.js",
-      "require": "./dist/cjs/utils/*.cjs"
+      "require": "./dist/cjs/utils/*.js"
     }
   },
   "directories": {
@@ -48,9 +48,8 @@
   "scripts": {
     "build": "npm run build:clean && npm run build:types && npm run build:esm && npm run build:cjs",
     "build:clean": "rm -rf dist",
-    "build:esm": "tsc --outDir ./dist/esm",
-    "build:cjs": "tsc -p tsconfig.cjs.json && npm run build:cjs:rename",
-    "build:cjs:rename": "node scripts/rename-to-cjs.js",
+    "build:esm": "tsc --outDir ./dist/esm && echo '{\"type\": \"module\"}' > dist/esm/package.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
     "build:types": "tsc -p tsconfig.types.json",
     "build:watch": "tsc --watch --outDir ./dist/esm",
     "format": "prettier --write .",

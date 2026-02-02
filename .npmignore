@@ -19,7 +19,6 @@ examples/
 test/
 tests/
 docs/
-scripts/
 
 # Test files
 *.test.js
