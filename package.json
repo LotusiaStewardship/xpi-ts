@@ -2,45 +2,58 @@
   "name": "xpi-ts",
   "version": "0.2.10",
   "description": "Bitcore-compatible wallet SDK for Lotus",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/types/index.d.ts",
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.cjs"
     },
     "./lib/bitcore": {
-      "types": "./dist/lib/bitcore/index.d.ts",
-      "import": "./dist/lib/bitcore/index.js"
+      "types": "./dist/types/lib/bitcore/index.d.ts",
+      "import": "./dist/esm/lib/bitcore/index.js",
+      "require": "./dist/cjs/lib/bitcore/index.cjs"
     },
     "./lib/bitcore/*": {
-      "types": "./dist/lib/bitcore/*.d.ts",
-      "import": "./dist/lib/bitcore/*.js"
+      "types": "./dist/types/lib/bitcore/*.d.ts",
+      "import": "./dist/esm/lib/bitcore/*.js",
+      "require": "./dist/cjs/lib/bitcore/*.cjs"
     },
     "./lib/rank": {
-      "types": "./dist/lib/rank/index.d.ts",
-      "import": "./dist/lib/rank/index.js"
+      "types": "./dist/types/lib/rank/index.d.ts",
+      "import": "./dist/esm/lib/rank/index.js",
+      "require": "./dist/cjs/lib/rank/index.cjs"
     },
     "./lib/rank/*": {
-      "types": "./dist/lib/rank/*.d.ts",
-      "import": "./dist/lib/rank/*.js"
+      "types": "./dist/types/lib/rank/*.d.ts",
+      "import": "./dist/esm/lib/rank/*.js",
+      "require": "./dist/cjs/lib/rank/*.cjs"
     },
     "./lib/*": {
-      "types": "./dist/lib/*.d.ts",
-      "import": "./dist/lib/*.js"
+      "types": "./dist/types/lib/*.d.ts",
+      "import": "./dist/esm/lib/*.js",
+      "require": "./dist/cjs/lib/*.cjs"
     },
     "./utils/*": {
-      "types": "./dist/utils/*.d.ts",
-      "import": "./dist/utils/*.js"
+      "types": "./dist/types/utils/*.d.ts",
+      "import": "./dist/esm/utils/*.js",
+      "require": "./dist/cjs/utils/*.cjs"
     }
   },
   "directories": {
     "lib": "lib"
   },
   "scripts": {
-    "build": "tsc",
-    "build:watch": "tsc --watch",
+    "build": "npm run build:clean && npm run build:types && npm run build:esm && npm run build:cjs",
+    "build:clean": "rm -rf dist",
+    "build:esm": "tsc --outDir ./dist/esm",
+    "build:cjs": "tsc -p tsconfig.cjs.json && npm run build:cjs:rename",
+    "build:cjs:rename": "node scripts/rename-to-cjs.js",
+    "build:types": "tsc -p tsconfig.types.json",
+    "build:watch": "tsc --watch --outDir ./dist/esm",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
