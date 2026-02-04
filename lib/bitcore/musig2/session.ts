@@ -31,7 +31,7 @@ import {
   type MuSigAggregatedNonce,
 } from '../crypto/musig2.js'
 import { verifyTaprootKeyPathMuSigPartial } from '../taproot/musig2.js'
-import { calculateTapTweak, tweakPublicKey } from '../taproot.js'
+import { calculateTapTweak, tweakPublicKey } from '../script/taproot'
 
 /**
  * Session phases in the MuSig2 protocol

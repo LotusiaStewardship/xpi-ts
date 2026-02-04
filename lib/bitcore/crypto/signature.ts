@@ -324,8 +324,8 @@ export class Signature {
 
     sig.compressed = compressed
     sig.i = i
-    sig.r = new BN(b2, 'le')
-    sig.s = new BN(b3, 'le')
+    sig.r = BN.fromBuffer(b2)
+    sig.s = BN.fromBuffer(b3)
 
     return sig
   }
@@ -595,8 +595,8 @@ export class Signature {
     }
 
     const b1 = Buffer.from([val])
-    const b2 = this.r.toArrayLike(Buffer, 'le', 32)
-    const b3 = this.s.toArrayLike(Buffer, 'le', 32)
+    const b2 = this.r.toBuffer({ size: 32 })
+    const b3 = this.s.toBuffer({ size: 32 })
 
     return Buffer.concat([b1, b2, b3])
   }

@@ -47,7 +47,7 @@ const nftMetadata = {
 }
 
 // Create NFT
-const nft = NFTUtil.createKeyPathNFT(
+const nft = NFTUtil.createNFT(
   creatorKey.publicKey,
   nftMetadata,
   1000, // 0.001 XPI

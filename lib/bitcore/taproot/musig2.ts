@@ -44,7 +44,7 @@ import {
   tweakPrivateKey,
   type TapNode,
   type TapLeaf,
-} from '../taproot.js'
+} from '../script/taproot'
 
 /**
  * Result of MuSig2 Taproot key creation
@@ -104,7 +104,6 @@ export interface MuSigTaprootKeyResult {
  */
 export function buildMuSigTaprootKey(
   signerPubKeys: PublicKey[],
-  state?: Buffer,
 ): MuSigTaprootKeyResult {
   // Step 1: Aggregate signer public keys
   const keyAggContext = musigKeyAgg(signerPubKeys)
@@ -120,7 +119,7 @@ export function buildMuSigTaprootKey(
   const commitment = tweakPublicKey(aggregatedPubKey, merkleRoot)
 
   // Step 5: Build Taproot script
-  const script = buildKeyPathTaproot(aggregatedPubKey, state)
+  const script = buildKeyPathTaproot(aggregatedPubKey)
 
   return {
     aggregatedPubKey,
@@ -378,7 +377,7 @@ export function verifyTaprootKeyPathMuSigPartial(
  */
 export function isMuSigTaprootOutput(script: Script): boolean {
   // MuSig2 Taproot outputs are indistinguishable from regular Taproot
-  return script.isPayToTaproot()
+  return script.isTaprootOut()
 }
 
 /**
@@ -386,13 +385,11 @@ export function isMuSigTaprootOutput(script: Script): boolean {
  *
  * @param signerPubKeys - Array of signer public keys
  * @param network - Network for address ('livenet' or 'testnet')
- * @param state - Optional 32-byte state
  * @returns Taproot address and key info
  */
 export function createMuSigTaprootAddress(
   signerPubKeys: PublicKey[],
   network?: NetworkName,
-  state?: Buffer,
 ): {
   address: Address
   script: Script
@@ -413,7 +410,7 @@ export function createMuSigTaprootAddress(
       `Public key network mismatch at index ${mismatchedKeyIndex}: expected '${inferredNetwork}', got '${signerPubKeys[mismatchedKeyIndex].network.name}'`,
     )
   }
-  const result = buildMuSigTaprootKey(signerPubKeys, state)
+  const result = buildMuSigTaprootKey(signerPubKeys)
   const address = Address.fromTaprootCommitment(
     result.commitment,
     inferredNetwork,

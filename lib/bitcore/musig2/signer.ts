@@ -398,10 +398,10 @@ export class MuSig2Signer {
    * @param state - Optional 32-byte state data (e.g., NFT metadata hash)
    * @returns Taproot-specific preparation result
    */
-  prepareTaproot(
-    state?: Buffer,
-  ): MuSigTaprootKeyResult & { keyAggContext: MuSigKeyAggContext } {
-    const result = buildMuSigTaprootKey(this.config.signers, state)
+  prepareTaproot(): MuSigTaprootKeyResult & {
+    keyAggContext: MuSigKeyAggContext
+  } {
+    const result = buildMuSigTaprootKey(this.config.signers)
 
     // Get key aggregation context
     const keyAggContext = musigKeyAgg(this.config.signers)

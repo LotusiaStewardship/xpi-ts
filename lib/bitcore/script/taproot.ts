@@ -6,7 +6,7 @@
 /**
  * Taproot Implementation for Lotus
  *
- * Implements Pay-To-Taproot (P2TR) support based on lotusd implementation.
+ * Implements Pay-To-Taproot (P2TR) script support based on lotusd implementation.
  *
  * Key Differences from BIP341:
  * - Uses 33-byte compressed public keys (not x-only 32-byte)
@@ -23,14 +23,14 @@
  * @module Taproot
  */
 
-import { Hash } from './crypto/hash.js'
-import { PublicKey } from './publickey.js'
-import { PrivateKey } from './privatekey.js'
-import { Script } from './script.js'
-import { Opcode } from './opcode.js'
-import { BN } from './crypto/bn.js'
-import { BufferWriter } from './encoding/bufferwriter.js'
-import { Signature } from './crypto/signature.js'
+import { Hash } from '../crypto/hash.js'
+import { PublicKey } from '../publickey.js'
+import { PrivateKey } from '../privatekey.js'
+import { Script } from '../script.js'
+import { Opcode } from '../opcode.js'
+import { BN } from '../crypto/bn.js'
+import { BufferWriter } from '../encoding/bufferwriter.js'
+import { Signature } from '../crypto/signature.js'
 
 /**
  * Taproot Leaf Node
@@ -86,10 +86,20 @@ export type TapNode = TapLeafNode | TapBranchNode
 /**
  * Individual leaf in the Taproot tree with its Merkle path
  */
+/**
+ * Individual leaf in the Taproot tree with its Merkle path
+ *
+ * Represents a fully processed leaf node including its computed hash
+ * and the Merkle path needed to prove inclusion in the tree.
+ */
 export interface TapLeaf {
+  /** The script for this leaf */
   script: Script
+  /** Leaf version byte (e.g., 0xc0 for tapscript) */
   leafVersion: number
+  /** Computed tapleaf hash (32 bytes) */
   leafHash: Buffer
+  /** Array of sibling hashes for Merkle proof */
   merklePath: Buffer[]
 }
 
@@ -104,25 +114,73 @@ export interface TapTreeBuildResult {
 }
 
 // Taproot Constants
+/** Mask for extracting leaf version from control block first byte (clears parity bit) */
 export const TAPROOT_LEAF_MASK = 0xfe
+/** Default leaf version for tapscript (0xc0) */
 export const TAPROOT_LEAF_TAPSCRIPT = 0xc0
+/** Base size of control block: 1 byte control + 32 bytes internal pubkey */
 export const TAPROOT_CONTROL_BASE_SIZE = 33
+/** Size of each Merkle path node in control block */
 export const TAPROOT_CONTROL_NODE_SIZE = 32
+/** Maximum number of Merkle path nodes allowed in control block */
 export const TAPROOT_CONTROL_MAX_NODE_COUNT = 128
+/** Maximum control block size: base + max nodes (33 + 32 * 128 = 4129 bytes) */
 export const TAPROOT_CONTROL_MAX_SIZE =
   TAPROOT_CONTROL_BASE_SIZE +
   TAPROOT_CONTROL_NODE_SIZE * TAPROOT_CONTROL_MAX_NODE_COUNT
 
 export const TAPROOT_SCRIPTTYPE = Opcode.OP_1
 export const TAPROOT_INTRO_SIZE = 3 // OP_SCRIPTTYPE + OP_1 + push length
-export const TAPROOT_SIZE_WITHOUT_STATE = TAPROOT_INTRO_SIZE + 33 // 36 bytes
-export const TAPROOT_SIZE_WITH_STATE = TAPROOT_INTRO_SIZE + 33 + 33 // 69 bytes
+
+// Public key size constants (must be declared before use)
+export const PUBKEY_COMPRESSED_SIZE = 33 // Compressed public key size
+export const PUBKEY_UNCOMPRESSED_SIZE = 65 // Uncompressed public key size
+export const PUBKEY_XCOORD_SIZE = 32 // X-coordinate size
+/** SHA256 hash size in bytes (used for merkle nodes, tweaks, and state commitments) */
+export const SHA256_HASH_SIZE = 32
+
+/** Size of P2TR output without state: intro (3) + pubkey (33) = 36 bytes */
+export const TAPROOT_SIZE_WITHOUT_STATE =
+  TAPROOT_INTRO_SIZE + PUBKEY_COMPRESSED_SIZE // 36 bytes
+
+/** Size of P2TR output with state: intro (3) + pubkey (33) + push opcode (1) + state hash (32) = 69 bytes */
+export const TAPROOT_SIZE_WITH_STATE =
+  TAPROOT_INTRO_SIZE + PUBKEY_COMPRESSED_SIZE + 0x01 + SHA256_HASH_SIZE // 69 bytes
 
 /** SIGHASH_ALL | SIGHASH_LOTUS */
 export const TAPROOT_SIGHASH_TYPE =
   Signature.SIGHASH_ALL | Signature.SIGHASH_LOTUS
 
+/** Annex tag byte for Taproot witness stack (0x50). Reference: lotusd/src/script/interpreter.cpp */
 export const TAPROOT_ANNEX_TAG = 0x50
+
+/**
+ * Tag for TapLeaf hash calculation
+ * Used in: tapleaf_hash = SHA256_Tag("TapLeaf", leaf_version || compact_size(script) || script)
+ * @see {@link calculateTapLeaf}
+ */
+export const TAPROOT_TAG_TAPLEAF = 'TapLeaf'
+
+/**
+ * Tag for TapBranch hash calculation
+ * Used in: tapbranch_hash = SHA256_Tag("TapBranch", left || right) where left < right lexicographically
+ * @see {@link calculateTapBranch}
+ */
+export const TAPROOT_TAG_TAPBRANCH = 'TapBranch'
+
+/**
+ * Tag for TapTweak hash calculation
+ * Used in: tweak = SHA256_Tag("TapTweak", internal_pubkey || merkle_root)
+ * @see {@link calculateTapTweak}
+ */
+export const TAPROOT_TAG_TAPTWEAK = 'TapTweak'
+
+/** Prefix byte for compressed public key with even Y-coordinate */
+export const PUBKEY_PREFIX_EVEN = 0x02
+/** Prefix byte for compressed public key with odd Y-coordinate */
+export const PUBKEY_PREFIX_ODD = 0x03
+/** Prefix byte for uncompressed public key */
+export const PUBKEY_PREFIX_UNCOMPRESSED = 0x04
 
 /**
  * Tagged hash for Taproot
@@ -133,7 +191,7 @@ export const TAPROOT_ANNEX_TAG = 0x50
  *
  * @param tag - Tag string (e.g., "TapTweak", "TapLeaf", "TapBranch")
  * @param data - Data to hash
- * @returns 32-byte hash
+ * @returns SHA256_HASH_SIZE-byte hash
  */
 export function taggedHash(tag: string, data: Buffer): Buffer {
   const tagHash = Hash.sha256(Buffer.from(tag, 'utf8'))
@@ -146,17 +204,18 @@ export function taggedHash(tag: string, data: Buffer): Buffer {
  *
  * tweak = SHA256_Tag("TapTweak", internal_pubkey || merkle_root)
  *
- * @param internalPubKey - 33-byte internal public key
- * @param merkleRoot - 32-byte merkle root (or empty buffer for key-only)
- * @returns 32-byte tweak hash
+ * @param internalPubKey - PUBKEY_COMPRESSED_SIZE-byte internal public key
+ * @param merkleRoot - SHA256_HASH_SIZE-byte merkle root (or empty buffer for key-only)
+ * @returns SHA256_HASH_SIZE-byte tweak hash
  */
 export function calculateTapTweak(
   internalPubKey: PublicKey,
-  merkleRoot: Buffer = Buffer.alloc(32),
+  merkleRoot: Buffer = Buffer.alloc(SHA256_HASH_SIZE),
 ): Buffer {
-  const pubKeyBytes = internalPubKey.toBuffer()
-  const data = Buffer.concat([pubKeyBytes, merkleRoot])
-  return taggedHash('TapTweak', data)
+  return taggedHash(
+    TAPROOT_TAG_TAPTWEAK,
+    Buffer.concat([internalPubKey.toBuffer(), merkleRoot]),
+  )
 }
 
 /**
@@ -166,7 +225,7 @@ export function calculateTapTweak(
  *
  * @param script - Tapscript
  * @param leafVersion - Leaf version (default: 0xc0 for tapscript)
- * @returns 32-byte tapleaf hash
+ * @returns SHA256_HASH_SIZE-byte tapleaf hash
  */
 export function calculateTapLeaf(
   script: Script | Buffer,
@@ -179,7 +238,7 @@ export function calculateTapLeaf(
   writer.writeVarintNum(scriptBuf.length)
   writer.write(scriptBuf)
 
-  return taggedHash('TapLeaf', writer.toBuffer())
+  return taggedHash(TAPROOT_TAG_TAPLEAF, writer.toBuffer())
 }
 
 /**
@@ -190,7 +249,7 @@ export function calculateTapLeaf(
  *
  * @param left - Left branch hash
  * @param right - Right branch hash
- * @returns 32-byte tapbranch hash
+ * @returns SHA256_HASH_SIZE-byte tapbranch hash
  */
 export function calculateTapBranch(left: Buffer, right: Buffer): Buffer {
   // Order lexicographically
@@ -199,7 +258,7 @@ export function calculateTapBranch(left: Buffer, right: Buffer): Buffer {
       ? Buffer.concat([left, right])
       : Buffer.concat([right, left])
 
-  return taggedHash('TapBranch', ordered)
+  return taggedHash(TAPROOT_TAG_TAPBRANCH, ordered)
 }
 
 /**
@@ -213,7 +272,7 @@ export function calculateTapBranch(left: Buffer, right: Buffer): Buffer {
  */
 export function tweakPublicKey(
   internalPubKey: PublicKey,
-  merkleRoot: Buffer = Buffer.alloc(32),
+  merkleRoot: Buffer = Buffer.alloc(SHA256_HASH_SIZE),
 ): PublicKey {
   const tweak = calculateTapTweak(internalPubKey, merkleRoot)
   return internalPubKey.addScalar(tweak)
@@ -230,7 +289,7 @@ export function tweakPublicKey(
  */
 export function tweakPrivateKey(
   internalPrivKey: PrivateKey,
-  merkleRoot: Buffer = Buffer.alloc(32),
+  merkleRoot: Buffer = Buffer.alloc(SHA256_HASH_SIZE),
 ): PrivateKey {
   const internalPubKey = internalPrivKey.publicKey
   const tweak = calculateTapTweak(internalPubKey, merkleRoot)
@@ -320,10 +379,10 @@ export function buildTapTree(tree: TapNode): TapTreeBuildResult {
  *
  * Control block format:
  * - 1 byte: leaf_version | parity_bit
- * - 32 bytes: internal public key X-coordinate (without 0x02/0x03 prefix)
- * - 32*n bytes: merkle path
+ * - SHA256_HASH_SIZE bytes: internal public key X-coordinate (without PUBKEY_PREFIX_EVEN/PUBKEY_PREFIX_ODD prefix)
+ * - SHA256_HASH_SIZE*n bytes: merkle path
  *
- * Total size: 33 + 32*n bytes
+ * Total size: PUBKEY_COMPRESSED_SIZE + SHA256_HASH_SIZE*n bytes
  *
  * The parity bit (bit 0 of first byte) indicates if the internal pubkey's
  * Y-coordinate is even (0) or odd (1), allowing reconstruction of the full
@@ -331,7 +390,7 @@ export function buildTapTree(tree: TapNode): TapTreeBuildResult {
  *
  * Reference: lotusd/src/script/taproot.cpp lines 43-54
  *
- * @param internalPubKey - Internal public key (33-byte compressed)
+ * @param internalPubKey - Internal public key (PUBKEY_COMPRESSED_SIZE-byte compressed)
  * @param leafIndex - Index of the leaf being spent
  * @param tree - Taproot tree structure
  * @returns Control block buffer
@@ -351,17 +410,17 @@ export function createControlBlock(
   const pubKeyBytes = internalPubKey.toBuffer()
 
   // First byte: leaf version with parity bit
-  // Parity is 1 if y-coordinate is odd (pubkey byte is 0x03), 0 if even (0x02)
-  const parity = pubKeyBytes[0] === 0x03 ? 1 : 0
+  // Parity is 1 if y-coordinate is odd (pubkey byte is PUBKEY_PREFIX_ODD), 0 if even (PUBKEY_PREFIX_EVEN)
+  const parity = pubKeyBytes[0] === PUBKEY_PREFIX_ODD ? 1 : 0
   const controlByte = (leaf.leafVersion & TAPROOT_LEAF_MASK) | parity
 
   const writer = new BufferWriter()
   writer.writeUInt8(controlByte)
 
-  // Next 32 bytes: x-coordinate only (not the full 33-byte compressed key)
+  // Next SHA256_HASH_SIZE bytes: x-coordinate only (not the full PUBKEY_COMPRESSED_SIZE-byte compressed key)
   // Parity is already encoded in the control byte above
-  // Control block format: [control_byte][32-byte x-coord][merkle_path...]
-  writer.write(pubKeyBytes.slice(1, 33)) // Skip the 0x02/0x03 prefix, write only x-coordinate
+  // Control block format: [control_byte][SHA256_HASH_SIZE-byte x-coord][merkle_path...]
+  writer.write(pubKeyBytes.subarray(1, PUBKEY_COMPRESSED_SIZE)) // Skip the PUBKEY_PREFIX_EVEN/PUBKEY_PREFIX_ODD prefix, write only x-coordinate
 
   // Merkle path
   for (const node of leaf.merklePath) {
@@ -372,62 +431,95 @@ export function createControlBlock(
 }
 
 /**
- * Verify a Taproot commitment
+ * Apply a tweak scalar directly to a public key
  *
- * Verifies that the commitment pubkey equals internal_pubkey + tweak*G
- * where tweak = tagged_hash("TapTweak", internal_pubkey || merkle_root)
+ * This is used internally by verifyTaprootCommitment where we already have the tweak hash
+ * and need to add it as a scalar to the public key without re-hashing.
  *
- * @param commitmentPubKey - The commitment public key (from script)
- * @param internalPubKey - The internal public key (from control block)
- * @param merkleRoot - The merkle root
- * @returns true if commitment is valid
+ * @param internalPubKey - Internal public key
+ * @param tweak - The tweak scalar (already computed hash)
+ * @returns Tweaked public key
  */
-export function verifyTaprootCommitment(
-  commitmentPubKey: PublicKey,
+export function applyTweakToPublicKey(
   internalPubKey: PublicKey,
-  merkleRoot: Buffer,
-): boolean {
-  const expectedCommitment = tweakPublicKey(internalPubKey, merkleRoot)
-  return commitmentPubKey.toString() === expectedCommitment.toString()
+  tweak: Buffer,
+): PublicKey {
+  return internalPubKey.addScalar(tweak)
 }
 
 /**
- * Check if a script is Pay-To-Taproot
+ * Verify a Taproot commitment
  *
- * Valid formats:
- * - OP_SCRIPTTYPE OP_1 0x21 <33-byte commitment>
- * - OP_SCRIPTTYPE OP_1 0x21 <33-byte commitment> 0x20 <32-byte state>
+ * Verifies that the control block proves that script is part of the commitment.
+ * Matches lotusd/src/script/taproot.cpp VerifyTaprootCommitment().
  *
- * @param script - Script to check
- * @returns true if script is P2TR
+ * @param controlBlock - Control block (TAPROOT_CONTROL_BASE_SIZE + SHA256_HASH_SIZE*n bytes)
+ * @param commitment - Public key that has been committed to (PUBKEY_COMPRESSED_SIZE bytes)
+ * @param script - Script we are proving inclusion in commitment for
+ * @returns Object containing tapleafHash and success boolean
  */
-export function isPayToTaproot(script: Script): boolean {
-  const buf = script.toBuffer()
+export function verifyTaprootCommitment(
+  controlBlock: Buffer,
+  commitment: Buffer,
+  script: Script,
+): { tapleafHash: Buffer; success: boolean } {
+  try {
+    // Validate control block size
+    if (controlBlock.length < TAPROOT_CONTROL_BASE_SIZE) {
+      return { tapleafHash: Buffer.alloc(SHA256_HASH_SIZE), success: false }
+    }
 
-  if (buf.length < TAPROOT_SIZE_WITHOUT_STATE) {
-    return false
+    const pathLen = Math.floor(
+      (controlBlock.length - TAPROOT_CONTROL_BASE_SIZE) /
+        TAPROOT_CONTROL_NODE_SIZE,
+    )
+
+    // Calculate merkle root from control block
+    const leafVersion = controlBlock[0] & TAPROOT_LEAF_MASK
+    let leafHash = calculateTapLeaf(script, leafVersion)
+    let merkleHash = leafHash
+
+    // Process merkle path nodes
+    for (let i = 0; i < pathLen; i++) {
+      const nodeOffset =
+        TAPROOT_CONTROL_BASE_SIZE + i * TAPROOT_CONTROL_NODE_SIZE
+      const node = controlBlock.subarray(
+        nodeOffset,
+        nodeOffset + TAPROOT_CONTROL_NODE_SIZE,
+      )
+
+      // Lexicographic ordering like lotusd
+      if (Buffer.compare(merkleHash, node) < 0) {
+        merkleHash = calculateTapBranch(merkleHash, node)
+      } else {
+        merkleHash = calculateTapBranch(node, merkleHash)
+      }
+    }
+
+    // Extract internal pubkey from control block
+    // We encode the parity of the internal pubkey in the first bit of the control block.
+    const pubkeyBytes = controlBlock.subarray(0, TAPROOT_CONTROL_BASE_SIZE)
+    const pubkeyBuffer = Buffer.from(pubkeyBytes)
+
+    // Parity of internal pubkey is encoded in the first bit
+    pubkeyBuffer[0] =
+      pubkeyBuffer[0] & 1 ? PUBKEY_PREFIX_ODD : PUBKEY_PREFIX_EVEN
+    const internalPubKey = new PublicKey(pubkeyBuffer)
+
+    // Calculate tweak hash and apply directly to public key (like lotusd AddScalar)
+    const tweakHash = calculateTapTweak(internalPubKey, merkleHash)
+
+    // Verify commitment matches
+    const commitmentKey = new PublicKey(commitment)
+    const expectedCommitment = applyTweakToPublicKey(internalPubKey, tweakHash)
+
+    return {
+      tapleafHash: leafHash,
+      success: commitmentKey.toString() === expectedCommitment.toString(),
+    }
+  } catch (e) {
+    return { tapleafHash: Buffer.alloc(SHA256_HASH_SIZE), success: false }
   }
-
-  // Must start with OP_SCRIPTTYPE OP_1
-  if (buf[0] !== Opcode.OP_SCRIPTTYPE || buf[1] !== TAPROOT_SCRIPTTYPE) {
-    return false
-  }
-
-  // Next byte must be 0x21 (33 bytes push)
-  if (buf[2] !== 33) {
-    return false
-  }
-
-  // If exactly 36 bytes, valid without state
-  if (buf.length === TAPROOT_SIZE_WITHOUT_STATE) {
-    return true
-  }
-
-  // If has state, must be exactly 69 bytes with 0x20 (32 bytes) state push
-  return (
-    buf.length === TAPROOT_SIZE_WITH_STATE &&
-    buf[TAPROOT_SIZE_WITHOUT_STATE] === 32
-  )
 }
 
 /**
@@ -438,12 +530,12 @@ export function isPayToTaproot(script: Script): boolean {
  * @throws Error if not a valid P2TR script
  */
 export function extractTaprootCommitment(script: Script): PublicKey {
-  if (!isPayToTaproot(script)) {
+  if (!script.isTaprootOut()) {
     throw new Error('Not a valid Pay-To-Taproot script')
   }
 
   const buf = script.toBuffer()
-  const commitmentBytes = buf.subarray(3, 3 + 33)
+  const commitmentBytes = buf.subarray(3, 3 + PUBKEY_COMPRESSED_SIZE)
 
   return PublicKey.fromBuffer(commitmentBytes)
 }
@@ -452,7 +544,7 @@ export function extractTaprootCommitment(script: Script): PublicKey {
  * Extract the state from a Taproot script (if present)
  *
  * @param script - P2TR script
- * @returns State buffer (32 bytes) or null if no state
+ * @returns State buffer (SHA256_HASH_SIZE bytes) or null if no state
  */
 export function extractTaprootState(script: Script): Buffer | null {
   const buf = script.toBuffer()
@@ -467,53 +559,31 @@ export function extractTaprootState(script: Script): Buffer | null {
 /**
  * Build a Pay-To-Taproot script
  *
+ * @deprecated Use Script.buildPayToTaproot instead
  * @param commitment - Commitment public key (tweaked)
- * @param state - Optional 32-byte state
+ * @param state - Optional 32-byte state (only for script-path spending)
  * @returns P2TR script
  */
 export function buildPayToTaproot(
-  commitment: PublicKey,
-  state?: Buffer,
+  _commitment: PublicKey,
+  _state?: Buffer,
 ): Script {
-  if (state && state.length !== 32) {
-    throw new Error('Taproot state must be exactly 32 bytes')
-  }
-
-  const commitmentBytes = commitment.toBuffer()
-
-  if (commitmentBytes.length !== 33) {
-    throw new Error('Commitment must be 33-byte compressed public key')
-  }
-
-  if (state) {
-    return new Script()
-      .add(Opcode.OP_SCRIPTTYPE)
-      .add(TAPROOT_SCRIPTTYPE)
-      .add(commitmentBytes)
-      .add(state)
-  } else {
-    return new Script()
-      .add(Opcode.OP_SCRIPTTYPE)
-      .add(TAPROOT_SCRIPTTYPE)
-      .add(commitmentBytes)
-  }
+  throw new Error(
+    'This function has been deprecated. Used Script.buildTaprootOut instead',
+  )
 }
 
 /**
  * Build a simple key-path-only Taproot output
  *
  * @param internalPubKey - Internal public key
- * @param state - Optional 32-byte state
- * @returns P2TR script
+ * @returns P2TR script (key-path has no state)
  */
-export function buildKeyPathTaproot(
-  internalPubKey: PublicKey,
-  state?: Buffer,
-): Script {
+export function buildKeyPathTaproot(internalPubKey: PublicKey): Script {
   // For key-path only, merkle root is all zeros
-  const merkleRoot = Buffer.alloc(32)
+  const merkleRoot = Buffer.alloc(SHA256_HASH_SIZE)
   const commitment = tweakPublicKey(internalPubKey, merkleRoot)
-  return buildPayToTaproot(commitment, state)
+  return Script.buildTaprootOut(commitment)
 }
 
 /**
@@ -536,7 +606,7 @@ export function buildScriptPathTaproot(
 } {
   const treeInfo = buildTapTree(tree)
   const commitment = tweakPublicKey(internalPubKey, treeInfo.merkleRoot)
-  const script = buildPayToTaproot(commitment, state)
+  const script = Script.buildTaprootOut(commitment, state)
 
   return {
     script,
@@ -552,9 +622,9 @@ export function buildScriptPathTaproot(
  * Verifies that a script is correctly committed to in a Taproot output
  * by validating the merkle proof in the control block.
  *
- * @param internalPubKey - Internal public key X-coordinate (32 bytes, without prefix)
+ * @param internalPubKey - Internal public key X-coordinate (SHA256_HASH_SIZE bytes, without prefix)
  * @param script - Script being revealed
- * @param commitmentPubKey - Commitment public key from scriptPubKey (33 bytes)
+ * @param commitmentPubKey - Commitment public key from scriptPubKey (PUBKEY_COMPRESSED_SIZE bytes)
  * @param leafVersion - Leaf version from control block
  * @param merklePath - Merkle path nodes from control block
  * @param parity - Parity bit from control block (0=even Y, 1=odd Y)
@@ -571,8 +641,8 @@ export function verifyTaprootScriptPath(
   try {
     // Reconstruct full 33-byte compressed pubkey from 32-byte x-coordinate and parity
     // internalPubKey is 32 bytes (x-coordinate only)
-    // parity bit tells us the prefix: 0 = 0x02 (even), 1 = 0x03 (odd)
-    const pubkeyPrefix = parity === 0 ? 0x02 : 0x03
+    // parity bit tells us the prefix: 0 = PUBKEY_PREFIX_EVEN (even), 1 = PUBKEY_PREFIX_ODD (odd)
+    const pubkeyPrefix = parity === 0 ? PUBKEY_PREFIX_EVEN : PUBKEY_PREFIX_ODD
     const fullPubkey = Buffer.concat([
       Buffer.from([pubkeyPrefix]),
       internalPubKey,
@@ -608,6 +678,25 @@ export function verifyTaprootScriptPath(
   } catch (e) {
     return false
   }
+}
+
+/**
+ * Verify Taproot script path spending using control block
+ *
+ * Convenience wrapper that uses the new verifyTaprootCommitment function.
+ *
+ * @param controlBlock - Control block (33 + 32*n bytes)
+ * @param commitment - Commitment public key from scriptPubKey (33 bytes)
+ * @param script - Script being revealed
+ * @returns true if verification succeeds
+ */
+export function verifyTaprootScriptPathFromControlBlock(
+  controlBlock: Buffer,
+  commitment: Buffer,
+  script: Script,
+): boolean {
+  const result = verifyTaprootCommitment(controlBlock, commitment, script)
+  return result.success
 }
 
 /**
@@ -657,13 +746,13 @@ export function verifyTaprootSpend(
   }
 
   // Verify scriptPubkey is valid P2TR
-  if (!isPayToTaproot(scriptPubkey)) {
+  if (!scriptPubkey.isTaprootOut()) {
     return { success: false, error: 'SCRIPT_ERR_SCRIPTTYPE_MALFORMED_SCRIPT' }
   }
 
   // Extract commitment pubkey from scriptPubkey
   const scriptBuf = scriptPubkey.toBuffer()
-  const vchPubkey = scriptBuf.slice(
+  const vchPubkey = scriptBuf.subarray(
     TAPROOT_INTRO_SIZE,
     TAPROOT_SIZE_WITHOUT_STATE,
   )
@@ -725,14 +814,14 @@ export function verifyTaprootSpend(
   // Extract internal pubkey and merkle path from control block
   // Control block format: [control_byte][32-byte x-coord][merkle_path...]
   // BASE_SIZE = 33 means bytes 0-32 are base (1 control + 32 pubkey)
-  const internalPubkey = controlBlock.slice(1, TAPROOT_CONTROL_BASE_SIZE)
+  const internalPubkey = controlBlock.subarray(1, TAPROOT_CONTROL_BASE_SIZE)
   const merklePath: Buffer[] = []
   for (
     let i = TAPROOT_CONTROL_BASE_SIZE;
     i < controlBlock.length;
     i += TAPROOT_CONTROL_NODE_SIZE
   ) {
-    merklePath.push(controlBlock.slice(i, i + TAPROOT_CONTROL_NODE_SIZE))
+    merklePath.push(controlBlock.subarray(i, i + TAPROOT_CONTROL_NODE_SIZE))
   }
 
   // Verify script is in merkle tree

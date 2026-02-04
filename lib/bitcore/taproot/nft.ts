@@ -3,11 +3,12 @@
  *
  * Implements NFT creation, transfer, and verification using Taproot's 32-byte state parameter.
  * The state parameter contains a hash commitment to off-chain NFT metadata.
+ * All NFTs use script-path spending to validate metadata on-chain.
  *
  * Key Features:
  * - Compact on-chain storage (69 bytes per NFT)
  * - Provable metadata commitments via SHA256 hashing
- * - Privacy via key path transfers
+ * - On-chain metadata validation using script-path spending
  * - Flexible trading mechanisms via script trees
  * - Collection support with shared attributes
  *
@@ -20,15 +21,15 @@ import { Hash } from '../crypto/hash.js'
 import { PublicKey } from '../publickey.js'
 import { PrivateKey } from '../privatekey.js'
 import { Script } from '../script.js'
+import { Opcode } from '../opcode.js'
 import {
   buildScriptPathTaproot,
   buildKeyPathTaproot,
   extractTaprootCommitment,
   extractTaprootState,
-  isPayToTaproot,
   type TapNode,
   type TapLeaf,
-} from '../taproot.js'
+} from '../script/taproot.js'
 import { Transaction } from '../transaction/transaction.js'
 import { Output } from '../transaction/output.js'
 import { TaprootInput } from '../transaction/input.js'
@@ -115,6 +116,12 @@ export interface NFTData {
   txid?: string
   /** Optional output index if minted */
   outputIndex?: number
+  /** Optional script tree info (for script-path NFTs) */
+  commitment?: PublicKey
+  /** Optional merkle root (for script-path NFTs) */
+  merkleRoot?: Buffer
+  /** Optional script leaves (for script-path NFTs) */
+  leaves?: TapLeaf[]
 }
 
 /**
@@ -326,7 +333,7 @@ export class NFT {
       this._merkleRoot = result.merkleRoot
       this._leaves = result.leaves
     } else {
-      this._script = buildKeyPathTaproot(config.ownerKey, this._metadataHash)
+      this._script = buildKeyPathTaproot(config.ownerKey)
     }
 
     const address = this._script.toAddress(config.network)
@@ -353,7 +360,7 @@ export class NFT {
     txid?: string,
     outputIndex?: number,
   ): NFT {
-    if (!isPayToTaproot(script)) {
+    if (!script.isTaprootOut()) {
       throw new Error('Script is not a valid Pay-To-Taproot script')
     }
 
@@ -766,23 +773,23 @@ export class NFTUtil {
    * @throws Error if not a valid Taproot script
    */
   static extractMetadataHash(script: Script): Buffer | null {
-    if (!isPayToTaproot(script)) {
+    if (!script.isTaprootOut()) {
       throw new Error('Script is not a valid Pay-To-Taproot script')
     }
     return extractTaprootState(script)
   }
 
   /**
-   * Create a simple key-path NFT
+   * Create an NFT with metadata validation (script-path spending)
    *
-   * Creates an NFT with key-path-only spending (maximum privacy).
-   * The NFT can be transferred by signing with the owner's key.
+   * Creates an NFT that validates the metadata hash on-chain using script-path spending.
+   * The metadata hash is stored in the script state and validated during spending.
    *
    * @param ownerKey - Owner's public key
    * @param metadata - NFT metadata
    * @param satoshis - NFT value in satoshis (default: 1000)
    * @param network - Network (default: livenet)
-   * @returns NFTData instance
+   * @returns NFT instance with metadata validation
    *
    * @example
    * ```typescript
@@ -792,12 +799,12 @@ export class NFTUtil {
    *   description: 'A unique collectible',
    *   image: 'ipfs://Qm...',
    * }
-   * const nft = NFTUtil.createKeyPathNFT(ownerKey.publicKey, metadata)
+   * const nft = NFTUtil.createNFT(ownerKey.publicKey, metadata)
    * console.log('NFT address:', nft.address.toString())
    * console.log('Metadata hash:', nft.metadataHash.toString('hex'))
    * ```
    */
-  static createKeyPathNFT(
+  static createNFT(
     ownerKey: PublicKey,
     metadata: NFTMetadata,
     satoshis: number = 1000,
@@ -806,34 +813,40 @@ export class NFTUtil {
     // Hash the metadata
     const metadataHash = NFTUtil.hashMetadata(metadata)
 
-    // Create key-path-only Taproot output with state
-    const script = buildKeyPathTaproot(ownerKey, metadataHash)
+    // Create metadata validation script
+    // Script: OP_HASH160 <metadata_hash> OP_EQUALVERIFY OP_CHECKSIG
+    const metadataScript = new Script()
+      .add(Opcode.OP_HASH160)
+      .add(metadataHash)
+      .add(Opcode.OP_EQUALVERIFY)
+      .add(Opcode.OP_CHECKSIG)
+
+    // Create script tree with metadata validation
+    const scriptTree = {
+      script: metadataScript,
+    }
+
+    // Build script-path Taproot with state (metadata hash)
+    const result = buildScriptPathTaproot(ownerKey, scriptTree, metadataHash)
 
     // Create address
-    const address = script.toAddress(network)
+    const address = result.script.toAddress(network)
     if (!address) {
       throw new Error('Failed to create address from script')
     }
 
     return {
-      script,
+      script: result.script,
       address,
       metadataHash,
       metadata,
       satoshis,
+      // Additional script tree info for spending
+      commitment: result.commitment,
+      merkleRoot: result.merkleRoot,
+      leaves: result.leaves,
     }
   }
-
-  /**
-   * Create an NFT with script tree (for trading, escrow, etc.)
-   *
-   * @param ownerKey - Owner's public key
-   * @param metadata - NFT metadata
-   * @param scriptTree - Taproot script tree
-   * @param satoshis - NFT value in satoshis (default: 1000)
-   * @param network - Network (default: livenet)
-   * @returns NFT instance with script tree info
-   */
   static createScriptPathNFT(
     ownerKey: PublicKey,
     metadata: NFTMetadata,
@@ -888,7 +901,7 @@ export class NFTUtil {
   ): NFTWithCollection {
     const metadataHash = NFTUtil.hashCollectionNFT(collectionHash, nftMetadata)
 
-    const script = buildKeyPathTaproot(ownerKey, metadataHash)
+    const script = buildKeyPathTaproot(ownerKey)
     const address = script.toAddress(network)
     if (!address) {
       throw new Error('Failed to create address from script')
@@ -935,7 +948,7 @@ export class NFTUtil {
    * ```
    */
   static mintNFT(config: NFTMintConfig): Transaction {
-    const nft = NFTUtil.createKeyPathNFT(
+    const nft = NFTUtil.createNFT(
       config.ownerKey.publicKey,
       config.metadata,
       config.satoshis || 1000,
@@ -971,7 +984,7 @@ export class NFTUtil {
     const tx = new Transaction()
 
     for (const metadata of nftMetadataList) {
-      const nft = NFTUtil.createKeyPathNFT(
+      const nft = NFTUtil.createNFT(
         ownerKey.publicKey,
         metadata,
         satoshisPerNFT,
@@ -1066,7 +1079,7 @@ export class NFTUtil {
     }
 
     // Create new NFT output for recipient with same metadata hash
-    const newNFTScript = buildKeyPathTaproot(newOwnerKey, metadataHash)
+    const newNFTScript = buildKeyPathTaproot(newOwnerKey)
 
     // Calculate output value (subtract fee if specified)
     const outputSatoshis = fee ? nftUtxo.satoshis - fee : nftUtxo.satoshis
@@ -1162,7 +1175,7 @@ export class NFTUtil {
    * @returns true if script is an NFT
    */
   static isNFT(script: Script): boolean {
-    if (!isPayToTaproot(script)) {
+    if (!script.isTaprootOut()) {
       return false
     }
     const state = extractTaprootState(script)

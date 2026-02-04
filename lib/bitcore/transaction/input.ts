@@ -42,7 +42,7 @@ import {
   tweakPrivateKey,
   TAPROOT_SIGHASH_TYPE,
   extractTaprootCommitment,
-} from '../taproot.js'
+} from '../script/taproot'
 import type {
   MuSigKeyAggContext,
   MuSigAggregatedNonce,
@@ -1485,7 +1485,7 @@ export class TaprootInput extends Input {
       'Output is required',
     )
     Preconditions.checkState(
-      this.output!.script.isPayToTaproot(),
+      this.output!.script.isTaprootOut(),
       'Output must be Pay-To-Taproot',
     )
 

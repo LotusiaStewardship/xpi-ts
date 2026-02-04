@@ -171,6 +171,9 @@ export class Schnorr {
 
   /**
    * Ensure r part of signature is at least 32 bytes
+   *
+   * @param r - The r value as BN
+   * @returns Buffer representation (at least 32 bytes)
    */
   private getrBuffer(r: BN): Buffer {
     const rNaturalLength = r.toArrayLike(Buffer, 'be').length
@@ -182,6 +185,9 @@ export class Schnorr {
 
   /**
    * Ensure s part of signature is at least 32 bytes
+   *
+   * @param s - The s value as BN
+   * @returns Buffer representation (at least 32 bytes)
    */
   private getsBuffer(s: BN): Buffer {
     const sNaturalLength = s.toArrayLike(Buffer, 'be').length
@@ -264,10 +270,11 @@ export class Schnorr {
 
   /**
    * Verify signature
+   *
+   * @returns This Schnorr instance for method chaining
    */
   verify(): Schnorr {
-    // eslint-disable-next-line no-extra-boolean-cast
-    this.verified = !!!this.sigError()
+    this.verified = this.sigError() === false
     return this
   }
 
@@ -337,6 +344,11 @@ export class Schnorr {
 
   /**
    * Static sign method
+   *
+   * @param hashbuf - 32-byte hash buffer to sign
+   * @param privkey - Private key for signing
+   * @param endian - Byte endianness ('little' or 'big')
+   * @returns Schnorr signature
    */
   static sign(
     hashbuf: Buffer,
@@ -354,6 +366,12 @@ export class Schnorr {
 
   /**
    * Static verify method
+   *
+   * @param hashbuf - 32-byte hash buffer that was signed
+   * @param sig - Signature to verify
+   * @param pubkey - Public key to verify against
+   * @param endian - Byte endianness ('little' or 'big')
+   * @returns True if signature is valid, false otherwise
    */
   static verify(
     hashbuf: Buffer,
@@ -373,6 +391,9 @@ export class Schnorr {
 
   /**
    * Reverse buffer byte order
+   *
+   * @param buf - Buffer to reverse
+   * @returns Reversed buffer
    */
   private reverseBuffer(buf: Buffer): Buffer {
     const buf2 = Buffer.alloc(buf.length)

@@ -149,6 +149,7 @@ export {
 // Taproot modules
 export {
   // functions
+  applyTweakToPublicKey,
   buildKeyPathTaproot,
   buildPayToTaproot,
   buildScriptPathTaproot,
@@ -159,7 +160,6 @@ export {
   createControlBlock,
   extractTaprootCommitment,
   extractTaprootState,
-  isPayToTaproot,
   isTapLeafNode,
   isTapBranchNode,
   taggedHash,
@@ -167,6 +167,7 @@ export {
   tweakPrivateKey,
   verifyTaprootCommitment,
   verifyTaprootScriptPath,
+  verifyTaprootScriptPathFromControlBlock,
   verifyTaprootSpend,
   // constants
   TAPROOT_LEAF_MASK,
@@ -187,7 +188,8 @@ export {
   type TapNode,
   type TapLeaf,
   type TapTreeBuildResult,
-} from './taproot.js'
+  type TaprootVerifyResult,
+} from './script/taproot.js'
 
 // NFT modules
 export { NFT, NFTUtil } from './taproot/nft.js'
@@ -279,8 +281,6 @@ export type {
 export type { XAddressData, XAddressObject } from './xaddress.js'
 
 export type { ScriptData } from './script.js'
-
-export type { TaprootVerifyResult } from './taproot.js'
 
 export type { URIParams } from './uri.js'
 

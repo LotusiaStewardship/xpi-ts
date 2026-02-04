@@ -14,7 +14,6 @@ import {
 
 export interface BlockData {
   header?: BlockHeader | BlockHeaderData
-  metadata?: number
   transactions?: Transaction[]
 }
 
@@ -22,7 +21,6 @@ export interface BlockObject {
   id: string
   hash: string
   header: BlockHeaderObject
-  metadata: number
   transactions: unknown[]
 }
 
@@ -46,7 +44,6 @@ export class Block {
 
   // Instance properties
   header!: BlockHeader
-  metadata!: number
   transactions!: Transaction[]
   private _id?: string
 
@@ -158,7 +155,6 @@ export class Block {
           ? data.header
           : new BlockHeader(data.header)
         : new BlockHeader(),
-      metadata: data.metadata || 0x00,
       transactions: transactions,
     }
   }
@@ -170,7 +166,18 @@ export class Block {
     Preconditions.checkState(!br.finished(), 'No block data received')
 
     const header = BlockHeader.fromBufferReader(br)
-    const metadata = br.readUInt8()
+
+    // Read metadata vector (compact size prefix + metadata fields)
+    // CBlock in lotusd serializes: CBlockHeader + vMetadata(vector) + vtx(vector)
+    const metadataCount = br.readVarintNum()
+    // Skip metadata fields for now (not currently used in BlockData interface)
+    // Each metadata field has: nFieldId (4 bytes) + vData (compact size + bytes)
+    for (let i = 0; i < metadataCount; i++) {
+      const fieldId = br.readUInt32LE() // eslint-disable-line @typescript-eslint/no-unused-vars
+      const dataLength = br.readVarintNum()
+      br.read(dataLength) // Skip the metadata data
+    }
+
     const transactionCount = br.readVarintNum()
     const transactions: Transaction[] = []
 
@@ -181,7 +188,6 @@ export class Block {
 
     return {
       header,
-      metadata,
       transactions,
     }
   }
@@ -191,7 +197,6 @@ export class Block {
    */
   private _newBlock(): void {
     this.header = new BlockHeader()
-    this.metadata = 0x00
     this.transactions = []
   }
 
@@ -201,7 +206,6 @@ export class Block {
   fromBuffer(buf: Buffer): Block {
     const info = Block._fromBufferReader(new BufferReader(buf))
     this.header = info.header as BlockHeader
-    this.metadata = info.metadata!
     this.transactions = info.transactions!
     return this
   }
@@ -220,7 +224,6 @@ export class Block {
   fromObject(obj: BlockData): Block {
     const info = Block._fromObject(obj)
     this.header = info.header as BlockHeader
-    this.metadata = info.metadata!
     this.transactions = info.transactions!
     return this
   }
@@ -234,7 +237,6 @@ export class Block {
       id: this.id,
       hash: this.hash,
       header: this.header.toObject(),
-      metadata: this.metadata,
       transactions: transactions,
     }
   }
@@ -266,7 +268,8 @@ export class Block {
       bw = new BufferWriter()
     }
     bw.write(this.header.toBuffer())
-    bw.writeUInt8(this.metadata)
+    // Write metadata vector (compact size 0 for now, as Block doesn't store metadata fields)
+    bw.writeVarintNum(0)
     bw.writeVarintNum(this.transactions.length)
     for (let i = 0; i < this.transactions.length; i++) {
       this.transactions[i].toBufferWriter(bw)

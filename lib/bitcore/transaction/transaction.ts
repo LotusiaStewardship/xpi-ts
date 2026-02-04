@@ -1141,7 +1141,7 @@ export class Transaction {
       let inputSigtype = sigtype
       if (!inputSigtype) {
         // Check if this is a Taproot input
-        if (input.output?.script.isPayToTaproot()) {
+        if (input.output?.script.isTaprootOut()) {
           // Check if this is key-path or script-path spending
           const taprootInput = input as TaprootInput
           if (taprootInput.hasScriptTree()) {
@@ -1669,7 +1669,7 @@ export class Transaction {
     let clazz: typeof Input
     const unspentOutput = new UnspentOutput(utxo)
 
-    if (unspentOutput.script.isPayToTaproot()) {
+    if (unspentOutput.script.isTaprootOut()) {
       // Check if this is a MuSig2 Taproot input
       if (
         unspentOutput.keyAggContext &&
@@ -1707,7 +1707,7 @@ export class Transaction {
       })
       this.addInput(taprootInput)
       return
-    } else if (unspentOutput.script.isPayToPublicKeyHash()) {
+    } else if (unspentOutput.script.isPublicKeyHashOut()) {
       clazz = PublicKeyHashInput
     } else if (unspentOutput.script.isPublicKeyOut()) {
       clazz = PublicKeyInput
@@ -1757,7 +1757,7 @@ export class Transaction {
           opts,
         ),
       )
-    } else if (unspentOutput.script.isPayToScriptHash()) {
+    } else if (unspentOutput.script.isScriptHashOut()) {
       this.addInput(
         new MultisigScriptHashInput(
           new Input({
