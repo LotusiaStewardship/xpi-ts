@@ -5,10 +5,8 @@
  * Uses @noble/hashes for browser compatibility
  */
 
-import { sha1 } from '@noble/hashes/sha1'
-import { sha256 } from '@noble/hashes/sha256'
-import { sha512 } from '@noble/hashes/sha512'
-import { ripemd160 } from '@noble/hashes/ripemd160'
+import { ripemd160, sha1 } from '@noble/hashes/legacy'
+import { sha256, sha512 } from '@noble/hashes/sha2'
 
 export interface HashFunction {
   (buf: Buffer): Buffer
