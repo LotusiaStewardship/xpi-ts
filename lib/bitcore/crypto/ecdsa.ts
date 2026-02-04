@@ -178,7 +178,7 @@ export class ECDSA {
       throw new Error('i must be equal to 0, 1, 2, or 3')
     }
 
-    const e = new BN(this.hashbuf!, 'be')
+    const e = BN.fromBuffer(this.hashbuf!, { endian: 'big' })
     const r = this.sig!.r
     const s = this.sig!.s
 
@@ -196,7 +196,7 @@ export class ECDSA {
       throw new Error('nR is not a valid curve point')
     }
 
-    const eNeg = e.neg().mod(n)
+    const eNeg = e.neg().umod(n)
     const rInv = r.invm(n)
 
     const Q = R.mul(s).add(G.mul(eNeg)).mul(rInv)
@@ -221,18 +221,18 @@ export class ECDSA {
       return 'r and s not in range'
     }
 
-    const e = new BN(this.hashbuf, this.endian === 'little' ? 'le' : 'be')
+    const e = BN.fromBuffer(this.hashbuf, { endian: this.endian || 'big' })
     const n = Point.getN()
     const sinv = s.invm(n)
-    const u1 = sinv.mul(e).mod(n)
-    const u2 = sinv.mul(r).mod(n)
+    const u1 = sinv.mul(e).umod(n)
+    const u2 = sinv.mul(r).umod(n)
 
     const p = Point.getG().mulAdd(u1, this.pubkey.point, u2)
     if (p.isInfinity()) {
       return 'p is infinity'
     }
 
-    if (p.getX().mod(n).cmp(r) !== 0) {
+    if (p.getX().umod(n).cmp(r) !== 0) {
       return 'Invalid signature'
     } else {
       return false
@@ -279,11 +279,11 @@ export class ECDSA {
       badrs++
       k = this.k!
       Q = G.mul(k)
-      r = Q.getX().mod(N)
+      r = Q.getX().umod(N)
       s = k
         .invm(N)
         .mul(e.add(d.mul(r)))
-        .mod(N)
+        .umod(N)
     } while (r.cmp(new BN(0)) <= 0 || s.cmp(new BN(0)) <= 0)
 
     s = ECDSA.toLowS(s)
@@ -305,7 +305,7 @@ export class ECDSA {
       throw new Error('hashbuf must be a 32 byte buffer')
     }
 
-    const e = new BN(hashbuf, this.endian === 'little' ? 'le' : 'be')
+    const e = BN.fromBuffer(hashbuf, { endian: this.endian || 'big' })
     const obj = this._findSignature(d, e)
     obj.compressed = this.pubkey.compressed
 
@@ -370,7 +370,7 @@ export class ECDSA {
         endian: endian,
         privkey: privkey,
       })
-      .sign().sig!
+      .sign().sig
   }
 
   /**
