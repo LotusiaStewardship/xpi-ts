@@ -8,35 +8,86 @@ import { BN } from '../crypto/bn.js'
 
 const GENESIS_BITS = 0x1d00ffff
 
+/**
+ * Block header data interface for construction
+ * Contains all necessary data to create a BlockHeader, with flexible types
+ * for input parsing (accepts both Buffer and hex string formats)
+ */
 export interface BlockHeaderData {
+  /** Hash of the previous block (32 bytes) */
   prevHash?: Buffer | string
+  /** Compact representation of the target difficulty */
   bits?: number
+  /** Block timestamp in seconds since Unix epoch */
   time?: number
+  /** Alias for time field */
   timestamp?: number
+  /** Reserved field for future use */
   reserved?: number
+  /** Nonce used for proof of work */
   nonce?: BN
+  /** Block header version number */
   version?: number
+  /** Size of the block */
   size?: BN
+  /** Block height in the chain */
   height?: number
+  /** Hash of the epoch block (32 bytes) */
   epochBlock?: Buffer | string
+  /** Merkle root of all transactions (32 bytes) */
   merkleRoot?: Buffer | string
+  /** Extended metadata hash (32 bytes) */
   extendedMetadata?: Buffer | string
+  /** Computed block hash for validation */
   hash?: string
 }
 
+/**
+ * Block header object interface for serialization
+ * Represents the BlockHeader as a plain object with all values
+ * converted to serializable formats (strings and numbers)
+ */
 export interface BlockHeaderObject {
+  /** Computed block hash */
   hash: string
+  /** Hash of the previous block as hex string */
   prevHash: string
+  /** Compact representation of the target difficulty */
   bits: number
+  /** Block timestamp in seconds since Unix epoch */
   time: number
+  /** Reserved field for future use */
   reserved: number
-  nonce: string // Match reference: BN converted to string
+  /** Nonce as decimal string (BN converted to string) */
+  nonce: string
+  /** Block header version number */
   version: number
-  size: number // Match reference: BN converted to number
+  /** Size of the block as number (BN converted to number) */
+  size: number
+  /** Block height in the chain */
   height: number
+  /** Hash of the epoch block as hex string */
   epochBlock: string
+  /** Merkle root of all transactions as hex string */
   merkleRoot: string
+  /** Extended metadata hash as hex string */
   extendedMetadata: string
+}
+
+/**
+ * Merkle block data interface for serialization
+ * Represents the MerkleBlock as a plain object with all values
+ * converted to serializable formats (strings and numbers)
+ */
+export interface MerkleBlockData {
+  /** Block header data (BlockHeader instance or BlockHeaderData object) */
+  header: BlockHeader | BlockHeaderData
+  /** Total number of transactions in the original block */
+  numTransactions: number
+  /** Array of transaction hashes and merkle node hashes */
+  hashes: string[]
+  /** Bit flags used for traversing the partial merkle tree */
+  flags: number[]
 }
 
 export class BlockHeader {
@@ -128,7 +179,15 @@ export class BlockHeader {
       const buf = Buffer.from(arg, 'hex')
       info = BlockHeader._fromBufferReader(new BufferReader(buf))
     } else if (typeof arg === 'object' && arg !== null) {
-      info = BlockHeader._fromObject(arg)
+      // Check if it's already BlockHeaderData (has Buffer/BN fields) or BlockHeaderObject (has string fields)
+      const data = arg as Record<string, unknown>
+      if (Buffer.isBuffer(data.prevHash)) {
+        // It's BlockHeaderData - use directly
+        info = arg as BlockHeaderData
+      } else {
+        // It's BlockHeaderObject - deserialize
+        info = BlockHeader._fromObject(arg as unknown as BlockHeaderObject)
+      }
     } else {
       throw new TypeError('Unrecognized argument for BlockHeader')
     }
@@ -138,81 +197,52 @@ export class BlockHeader {
   /**
    * Create from object
    */
-  private static _fromObject(data: BlockHeaderData): BlockHeaderData {
+  private static _fromObject(data: BlockHeaderObject): BlockHeaderData {
     Preconditions.checkArgument(
       typeof data === 'object' && data !== null,
       'data is required',
     )
 
-    let prevHash = data.prevHash
-    let merkleRoot = data.merkleRoot
-    let epochBlock = data.epochBlock
-    let extendedMetadata = data.extendedMetadata
-    let nonce = data.nonce
-    let size = data.size
+    // Process hash fields: reverse from hex string to Buffer
+    const prevHash = data.prevHash
+      ? BufferUtil.reverse(Buffer.from(data.prevHash, 'hex'))
+      : Buffer.alloc(32)
+    const merkleRoot = data.merkleRoot
+      ? BufferUtil.reverse(Buffer.from(data.merkleRoot, 'hex'))
+      : Buffer.alloc(32)
+    const epochBlock = data.epochBlock
+      ? BufferUtil.reverse(Buffer.from(data.epochBlock, 'hex'))
+      : Buffer.alloc(32)
+    const extendedMetadata = data.extendedMetadata
+      ? BufferUtil.reverse(Buffer.from(data.extendedMetadata, 'hex'))
+      : Buffer.alloc(32)
 
-    if (typeof data.prevHash === 'string') {
-      prevHash = BufferUtil.reverse(Buffer.from(data.prevHash, 'hex'))
-    } else if (!Buffer.isBuffer(data.prevHash)) {
-      prevHash = Buffer.alloc(32)
-    }
-    if (typeof data.merkleRoot === 'string') {
-      merkleRoot = BufferUtil.reverse(Buffer.from(data.merkleRoot, 'hex'))
-    } else if (!Buffer.isBuffer(data.merkleRoot)) {
-      merkleRoot = Buffer.alloc(32)
-    }
-    if (typeof data.epochBlock === 'string') {
-      epochBlock = BufferUtil.reverse(Buffer.from(data.epochBlock, 'hex'))
-    } else if (!Buffer.isBuffer(data.epochBlock)) {
-      epochBlock = Buffer.alloc(32)
-    }
-    if (typeof data.extendedMetadata === 'string') {
-      extendedMetadata = BufferUtil.reverse(
-        Buffer.from(data.extendedMetadata, 'hex'),
-      )
-    } else if (!Buffer.isBuffer(data.extendedMetadata)) {
-      extendedMetadata = Buffer.alloc(32)
-    }
-    if (typeof data.nonce === 'string') {
-      nonce = new BN(data.nonce, 10)
-    } else if (typeof data.nonce === 'number') {
-      nonce = new BN(data.nonce)
-    } else if (data.nonce instanceof BN) {
-      nonce = data.nonce
-    } else {
-      nonce = new BN(0)
-    }
-    if (typeof data.size === 'string') {
-      size = new BN(data.size, 10)
-    } else if (typeof data.size === 'number') {
-      size = new BN(data.size)
-    } else if (data.size instanceof BN) {
-      size = data.size
-    } else {
-      size = new BN(0)
-    }
+    // Process nonce: string to BN (BlockHeaderObject has nonce as string)
+    const nonce = data.nonce ? new BN(data.nonce, 10) : new BN(0)
+
+    // Process size: number to BN (BlockHeaderObject has size as number)
+    const size = new BN(data.size || 0)
 
     return {
       hash: data.hash,
-      prevHash: prevHash as Buffer,
+      prevHash,
       bits: data.bits || 0,
-      timestamp: data.time || data.timestamp || 0,
+      time: data.time || 0,
       reserved: data.reserved || 0,
-      nonce: nonce as BN,
+      nonce,
       version: data.version || 0,
-      size: size as BN,
+      size,
       height: data.height || 0,
-      epochBlock: epochBlock as Buffer,
-      merkleRoot: merkleRoot as Buffer,
-      extendedMetadata: extendedMetadata as Buffer,
-      time: data.time || data.timestamp || 0,
+      epochBlock,
+      merkleRoot,
+      extendedMetadata,
     }
   }
 
   /**
    * Create from object
    */
-  static fromObject(obj: BlockHeaderData): BlockHeader {
+  static fromObject(obj: BlockHeaderObject): BlockHeader {
     const info = BlockHeader._fromObject(obj)
     return new BlockHeader(info)
   }
