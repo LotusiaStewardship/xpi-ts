@@ -23,14 +23,14 @@
  * @module Taproot
  */
 
-import { Hash } from './crypto/hash.js'
-import { PublicKey } from './publickey.js'
-import { PrivateKey } from './privatekey.js'
-import { Script } from './script.js'
-import { Opcode } from './opcode.js'
-import { BN } from './crypto/bn.js'
-import { BufferWriter } from './encoding/bufferwriter.js'
-import { Signature } from './crypto/signature.js'
+import { Hash } from '../crypto/hash.js'
+import { PublicKey } from '../publickey.js'
+import { PrivateKey } from '../privatekey.js'
+import { Script } from '../script.js'
+import { Opcode } from '../opcode.js'
+import { BN } from '../crypto/bn.js'
+import { BufferWriter } from '../encoding/bufferwriter.js'
+import { Signature } from '../crypto/signature.js'
 
 /**
  * Taproot Leaf Node
