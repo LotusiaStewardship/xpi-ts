@@ -13,7 +13,7 @@ import {
   TAPROOT_SIZE_WITHOUT_STATE,
   TAPROOT_SCRIPTTYPE,
   verifyTaprootSpend,
-} from '../taproot.js'
+} from './taproot.js'
 
 export interface InterpreterData {
   script?: Script

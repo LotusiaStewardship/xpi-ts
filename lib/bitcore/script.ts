@@ -26,9 +26,13 @@ import { BufferUtil } from './util/buffer.js'
 import { Signature } from './crypto/signature.js'
 import { Chunk } from './chunk.js'
 import {
+  PUBKEY_COMPRESSED_SIZE,
   TAPROOT_SIZE_WITH_STATE,
   TAPROOT_SIZE_WITHOUT_STATE,
-} from './taproot.js'
+  buildKeyPathTaproot,
+  buildScriptPathTaproot,
+  buildTapTree,
+} from './script/taproot.js'
 
 export interface ScriptData {
   chunks: Chunk[]
@@ -92,6 +96,14 @@ export class Script {
     this.chunks = obj.chunks
     this._network = obj._network
     return this
+  }
+
+  /**
+   * Create an empty Script
+   * @returns A new empty Script instance
+   */
+  static empty(): Script {
+    return new Script()
   }
 
   /**
@@ -261,7 +273,7 @@ export class Script {
       address = Address.fromString(address)
     }
     if (address.isPayToTaproot()) {
-      return Script.buildPayToTaproot(address.hashBuffer)
+      return Script.buildTaprootOut(address.hashBuffer)
     } else if (address.isPayToScriptHash()) {
       return Script.buildScriptHashOut(address)
     } else if (address.isPayToPublicKeyHash()) {
@@ -524,17 +536,6 @@ export class Script {
   }
 
   /**
-   * Build witness multisig output from script
-   */
-  static buildWitnessMultisigOutFromScript(script: Script): Script {
-    const scriptHash = Hash.sha256(script.toBuffer())
-    const witnessScript = new Script()
-    witnessScript.add(Opcode.OP_0)
-    witnessScript.add(scriptHash)
-    return witnessScript
-  }
-
-  /**
    * Build public key output script
    */
   static buildPublicKeyOut(pubkey: PublicKey): Script {
@@ -670,7 +671,7 @@ export class Script {
    * @param state - Optional 32-byte state
    * @returns P2TR script
    */
-  static buildPayToTaproot(
+  static buildTaprootOut(
     commitment: PublicKey | Buffer,
     state?: Buffer,
   ): Script {
@@ -683,7 +684,7 @@ export class Script {
     const commitmentBuf =
       commitment instanceof PublicKey ? commitment.toBuffer() : commitment
 
-    if (commitmentBuf.length !== 33) {
+    if (commitmentBuf.length !== PUBKEY_COMPRESSED_SIZE) {
       throw new Error(
         'Taproot commitment must be 33-byte compressed public key',
       )
@@ -746,6 +747,31 @@ export class Script {
   }
 
   /**
+   * Add or replace the state parameter in a Taproot script
+   *
+   * Modifies an existing P2TR script to include a 32-byte state parameter.
+   * If the script already has a state chunk, it will be replaced.
+   *
+   * @param state - 32-byte state buffer to add
+   * @returns This Script instance for chaining
+   * @throws Error if state is not exactly 32 bytes
+   */
+  addTaprootState(state: Buffer): Script {
+    if (state.length !== 32) {
+      throw new Error('Taproot state must be exactly 32 bytes')
+    }
+
+    // if state chunk already exists, replace
+    if (this.chunks[3]) {
+      this.chunks[3].buf = state
+      return this
+    }
+
+    this.add(state)
+    return this
+  }
+
+  /**
    * Convert script to Buffer
    * @returns The script as a Buffer
    */
@@ -773,28 +799,6 @@ export class Script {
    */
   toString(): string {
     return this.toBuffer().toString('hex')
-  }
-
-  /**
-   * Get P2PKH address string for this script
-   * @returns The P2PKH address as a string
-   */
-  toP2PKH(): string {
-    if (!this.isPayToPublicKeyHash()) {
-      throw new Error('Script is not a P2PKH address')
-    }
-    return this.chunks[2].buf!.toString('hex')
-  }
-
-  /**
-   * Get P2SH address string for this script
-   * @returns The P2SH address as a string
-   */
-  toP2SH(): string {
-    if (!this.isPayToScriptHash()) {
-      throw new Error('Script is not a P2SH address')
-    }
-    return this.chunks[1].buf!.toString('hex')
   }
 
   /**
@@ -901,67 +905,43 @@ export class Script {
   }
 
   /**
-   * Check if script is Pay-To-Public-Key-Hash (P2PKH) output
+   * Check if script is a Pay-to-Public-Key-Hash (P2PKH) output script
+   *
+   * P2PKH format: OP_DUP OP_HASH160 <20-byte pubkey hash> OP_EQUALVERIFY OP_CHECKSIG
+   *
    * @returns True if script is P2PKH output
    */
-  isPayToPublicKeyHash(): boolean {
+  isPublicKeyHashOut(): boolean {
     return (
       this.chunks.length === 5 &&
       this.chunks[0].opcodenum === Opcode.OP_DUP &&
       this.chunks[1].opcodenum === Opcode.OP_HASH160 &&
       this.chunks[2].opcodenum === 20 && // Direct push of 20 bytes
-      this.chunks[2].buf!.length === 20 &&
+      this.chunks[2].buf?.length === 20 &&
       this.chunks[3].opcodenum === Opcode.OP_EQUALVERIFY &&
       this.chunks[4].opcodenum === Opcode.OP_CHECKSIG
     )
   }
 
   /**
-   * Check if script is public key hash output (alias for isPayToPublicKeyHash)
-   * @returns True if script is P2PKH output
-   */
-  isPublicKeyHashOut(): boolean {
-    return !!(
-      this.chunks.length === 5 &&
-      this.chunks[0].opcodenum === Opcode.OP_DUP &&
-      this.chunks[1].opcodenum === Opcode.OP_HASH160 &&
-      this.chunks[2].buf &&
-      this.chunks[2].buf.length === 20 &&
-      this.chunks[3].opcodenum === Opcode.OP_EQUALVERIFY &&
-      this.chunks[4].opcodenum === Opcode.OP_CHECKSIG
-    )
-  }
-
-  /**
-   * Check if script is Pay-To-Script-Hash (P2SH) output
+   * Check if script is a Pay-to-Script-Hash (P2SH) output script
+   *
+   * P2SH format: OP_HASH160 <20-byte script hash> OP_EQUAL
+   *
    * @returns True if script is P2SH output
    */
-  isPayToScriptHash(): boolean {
+  isScriptHashOut(): boolean {
     return (
       this.chunks.length === 3 &&
       this.chunks[0].opcodenum === Opcode.OP_HASH160 &&
       this.chunks[1].opcodenum === 20 && // Direct push of 20 bytes
-      this.chunks[1].buf!.length === 20 &&
+      this.chunks[1].buf?.length === 20 &&
       this.chunks[2].opcodenum === Opcode.OP_EQUAL
     )
   }
 
   /**
-   * Check if script is script hash output (alias for isPayToScriptHash)
-   * @returns True if script is P2SH output
-   */
-  isScriptHashOut(): boolean {
-    const buf = this.toBuffer()
-    return (
-      buf.length === 23 &&
-      buf[0] === Opcode.OP_HASH160 &&
-      buf[1] === 0x14 &&
-      buf[buf.length - 1] === Opcode.OP_EQUAL
-    )
-  }
-
-  /**
-   * Check if this is a Pay-To-Taproot output script
+   * Check if this is a Pay-To-Taproot (P2TR) output script
    *
    * Valid formats:
    * - OP_SCRIPTTYPE OP_1 0x21 <33-byte commitment>
@@ -969,22 +949,20 @@ export class Script {
    *
    * Reference: lotusd/src/script/taproot.cpp IsPayToTaproot()
    *
-   * @returns {boolean} if this is a P2TR output script
+   * @returns True if script is P2TR output
    */
-  isPayToTaproot(): boolean {
-    const buf = this.toBuffer()
-
+  isTaprootOut(): boolean {
     if (
-      buf.length < TAPROOT_SIZE_WITHOUT_STATE ||
       // Must start with OP_SCRIPTTYPE OP_1
-      buf[0] !== Opcode.OP_SCRIPTTYPE ||
-      buf[1] !== Opcode.OP_1 ||
+      this.chunks[0].opcodenum !== Opcode.OP_SCRIPTTYPE ||
+      this.chunks[1].opcodenum !== Opcode.OP_1 ||
       // Next byte must be 0x21 (33 bytes push)
-      buf[2] !== 33
+      this.chunks[2].opcodenum !== 33
     ) {
       return false
     }
 
+    const buf = this.toBuffer()
     // If exactly 36 bytes, valid without state
     if (buf.length === TAPROOT_SIZE_WITHOUT_STATE) {
       return true
@@ -992,14 +970,6 @@ export class Script {
 
     // If has state, must be exactly 69 bytes with 0x20 (32 bytes) state push
     return buf.length === TAPROOT_SIZE_WITH_STATE && buf[36] === 32
-  }
-
-  /**
-   * Check if this is a Pay-To-Taproot output script (alias for isPayToTaproot)
-   * @returns True if script is P2TR output
-   */
-  isTaprootOut(): boolean {
-    return this.isPayToTaproot()
   }
 
   /**
@@ -1079,7 +1049,7 @@ export class Script {
       return Buffer.from(this.chunks[2].buf!)
     }
     // P2TR
-    if (this.isPayToTaproot()) {
+    if (this.isTaprootOut()) {
       return Buffer.from(this.chunks[2].buf!)
     }
 
@@ -1088,6 +1058,11 @@ export class Script {
 
   /**
    * Get address information from script
+   *
+   * Attempts to extract address information from the script. For output scripts,
+   * this will return the address the script pays to. For input scripts, this will
+   * return the address that signed the input (if determinable).
+   *
    * @returns The Address object or null if not applicable
    */
   getAddressInfo(): Address | null {
@@ -1105,14 +1080,15 @@ export class Script {
   }
 
   /**
-   * Get output address info
+   * Get output address info from script
+   * @returns The Address object or null if not a recognized output script type
    */
   private _getOutputAddressInfo(): Address | null {
     const info: { hashBuffer?: Buffer; type?: string; network?: Network } = {}
-    if (this.isPayToTaproot()) {
+    if (this.isTaprootOut()) {
       // For Taproot, extract the 33-byte commitment public key
       const buf = this.toBuffer()
-      info.hashBuffer = buf.slice(3, 36) // Skip OP_SCRIPTTYPE OP_1 0x21
+      info.hashBuffer = buf.subarray(3, 36) // Skip OP_SCRIPTTYPE OP_1 0x21
       info.type = Address.PayToTaproot
     } else if (this.isScriptHashOut()) {
       info.hashBuffer = this.getData()
@@ -1128,6 +1104,11 @@ export class Script {
 
   /**
    * Get input address info
+   *
+   * Note: Taproot inputs cannot derive addresses from the input script alone
+   * because the commitment is in the output script (scriptPubKey), not the
+   * input script (scriptSig). The output script format is:
+   * OP_SCRIPTTYPE OP_1 0x21 <33-byte commitment> [0x20 <32-byte state>]
    */
   private _getInputAddressInfo(): Address | null {
     const info: { hashBuffer?: Buffer; type?: string; network?: Network } = {}
@@ -1160,9 +1141,10 @@ export class Script {
     if (info instanceof Address) {
       // If a network is provided, create a new address with that network
       if (network) {
-        if (this.isPayToTaproot()) {
+        if (this.isTaprootOut()) {
           const buf = this.toBuffer()
-          const commitment = buf.slice(3, 36)
+          // P2TR address is commitment only without state
+          const commitment = buf.subarray(3, 36)
           return Address.fromTaprootCommitment(commitment, network)
         } else if (this.isPublicKeyHashOut()) {
           const hashBuffer = this.getData()
@@ -1528,12 +1510,9 @@ export class Script {
    */
   getType(): ScriptType {
     // Check output script types
-    if (this.isPayToTaproot()) {
-      const buf = this.toBuffer()
-      // If script has state (69 bytes), return p2tr-state, otherwise p2tr-commitment
-      return buf.length === TAPROOT_SIZE_WITH_STATE
-        ? 'p2tr-state'
-        : 'p2tr-commitment'
+    if (this.isTaprootOut()) {
+      // If script has state (4 chunks), return p2tr-state, otherwise p2tr-commitment
+      return this.chunks.length === 4 ? 'p2tr-state' : 'p2tr-commitment'
     } else if (this.isPublicKeyOut()) {
       return 'p2pk'
     } else if (this.isPublicKeyHashOut()) {
@@ -1847,8 +1826,12 @@ export function toAddress(
 
 /**
  * Create empty script
+ *
+ * @deprecated Use Script.empty() instead
  * @returns An empty Script instance
  */
 export function empty(): Script {
-  return new Script()
+  throw new Error(
+    'This function has been deprecated. Use Script.empty() instead.',
+  )
 }

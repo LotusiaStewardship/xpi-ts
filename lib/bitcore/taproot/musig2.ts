@@ -44,7 +44,7 @@ import {
   tweakPrivateKey,
   type TapNode,
   type TapLeaf,
-} from '../taproot.js'
+} from '../script/taproot'
 
 /**
  * Result of MuSig2 Taproot key creation
@@ -378,7 +378,7 @@ export function verifyTaprootKeyPathMuSigPartial(
  */
 export function isMuSigTaprootOutput(script: Script): boolean {
   // MuSig2 Taproot outputs are indistinguishable from regular Taproot
-  return script.isPayToTaproot()
+  return script.isTaprootOut()
 }
 
 /**

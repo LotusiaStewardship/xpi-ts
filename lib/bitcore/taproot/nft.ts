@@ -25,10 +25,9 @@ import {
   buildKeyPathTaproot,
   extractTaprootCommitment,
   extractTaprootState,
-  isPayToTaproot,
   type TapNode,
   type TapLeaf,
-} from '../taproot.js'
+} from '../script/taproot.js'
 import { Transaction } from '../transaction/transaction.js'
 import { Output } from '../transaction/output.js'
 import { TaprootInput } from '../transaction/input.js'
@@ -353,7 +352,7 @@ export class NFT {
     txid?: string,
     outputIndex?: number,
   ): NFT {
-    if (!isPayToTaproot(script)) {
+    if (!script.isTaprootOut()) {
       throw new Error('Script is not a valid Pay-To-Taproot script')
     }
 
@@ -766,7 +765,7 @@ export class NFTUtil {
    * @throws Error if not a valid Taproot script
    */
   static extractMetadataHash(script: Script): Buffer | null {
-    if (!isPayToTaproot(script)) {
+    if (!script.isTaprootOut()) {
       throw new Error('Script is not a valid Pay-To-Taproot script')
     }
     return extractTaprootState(script)
@@ -1162,7 +1161,7 @@ export class NFTUtil {
    * @returns true if script is an NFT
    */
   static isNFT(script: Script): boolean {
-    if (!isPayToTaproot(script)) {
+    if (!script.isTaprootOut()) {
       return false
     }
     const state = extractTaprootState(script)

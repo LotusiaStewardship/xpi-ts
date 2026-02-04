@@ -247,6 +247,8 @@ export class Output {
 
   /**
    * Convert to JSON
+   *
+   * @alias Output.toObject
    */
   toJSON = this.toObject
 
@@ -332,17 +334,24 @@ export class Output {
   }
 
   /**
-   * Check if this output is a pay-to-public-key-hash output
+   * Check if this output is a Pay-to-Public-Key-Hash output
    */
   isPayToPublicKeyHash(): boolean {
-    return this.script.isPayToPublicKeyHash()
+    return this.script.isPublicKeyHashOut()
   }
 
   /**
-   * Check if this output is a pay-to-script-hash output
+   * Check if this output is a Pay-to-Script-Hash output
    */
   isPayToScriptHash(): boolean {
-    return this.script.isPayToScriptHash()
+    return this.script.isScriptHashOut()
+  }
+
+  /**
+   * Check if this output is a Pay-to-Taproot output
+   */
+  isPayToTaproot(): boolean {
+    return this.script.isTaprootOut()
   }
 
   /**

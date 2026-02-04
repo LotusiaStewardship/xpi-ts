@@ -217,14 +217,21 @@ export class UnspentOutput {
    * Check if this unspent output is a pay-to-public-key-hash output
    */
   isPayToPublicKeyHash(): boolean {
-    return this.script.isPayToPublicKeyHash()
+    return this.script.isPublicKeyHashOut()
   }
 
   /**
    * Check if this unspent output is a pay-to-script-hash output
    */
   isPayToScriptHash(): boolean {
-    return this.script.isPayToScriptHash()
+    return this.script.isScriptHashOut()
+  }
+
+  /**
+   * Check if this unspent output is a pay-to-taproot output
+   */
+  isPayToTaproot(): boolean {
+    return this.script.isTaprootOut()
   }
 
   /**

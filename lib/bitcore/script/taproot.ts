@@ -136,12 +136,16 @@ export const TAPROOT_INTRO_SIZE = 3 // OP_SCRIPTTYPE + OP_1 + push length
 export const PUBKEY_COMPRESSED_SIZE = 33 // Compressed public key size
 export const PUBKEY_UNCOMPRESSED_SIZE = 65 // Uncompressed public key size
 export const PUBKEY_XCOORD_SIZE = 32 // X-coordinate size
-export const SHA256_HASH_SIZE = 32 // SHA-256 hash size
+/** SHA256 hash size in bytes (used for merkle nodes, tweaks, and state commitments) */
+export const SHA256_HASH_SIZE = 32
 
+/** Size of P2TR output without state: intro (3) + pubkey (33) = 36 bytes */
 export const TAPROOT_SIZE_WITHOUT_STATE =
   TAPROOT_INTRO_SIZE + PUBKEY_COMPRESSED_SIZE // 36 bytes
+
+/** Size of P2TR output with state: intro (3) + pubkey (33) + push opcode (1) + state hash (32) = 69 bytes */
 export const TAPROOT_SIZE_WITH_STATE =
-  TAPROOT_INTRO_SIZE + PUBKEY_COMPRESSED_SIZE + SHA256_HASH_SIZE // 69 bytes
+  TAPROOT_INTRO_SIZE + PUBKEY_COMPRESSED_SIZE + 0x01 + SHA256_HASH_SIZE // 69 bytes
 
 /** SIGHASH_ALL | SIGHASH_LOTUS */
 export const TAPROOT_SIGHASH_TYPE =
@@ -382,7 +386,7 @@ export function buildTapTree(tree: TapNode): TapTreeBuildResult {
  *
  * The parity bit (bit 0 of first byte) indicates if the internal pubkey's
  * Y-coordinate is even (0) or odd (1), allowing reconstruction of the full
- * PUBKEY_COMPRESSED_SIZE-byte compressed public key during verification.
+ * 33-byte compressed public key during verification.
  *
  * Reference: lotusd/src/script/taproot.cpp lines 43-54
  *
@@ -424,6 +428,23 @@ export function createControlBlock(
   }
 
   return writer.toBuffer()
+}
+
+/**
+ * Apply a tweak scalar directly to a public key
+ *
+ * This is used internally by verifyTaprootCommitment where we already have the tweak hash
+ * and need to add it as a scalar to the public key without re-hashing.
+ *
+ * @param internalPubKey - Internal public key
+ * @param tweak - The tweak scalar (already computed hash)
+ * @returns Tweaked public key
+ */
+export function applyTweakToPublicKey(
+  internalPubKey: PublicKey,
+  tweak: Buffer,
+): PublicKey {
+  return internalPubKey.addScalar(tweak)
 }
 
 /**
@@ -485,12 +506,12 @@ export function verifyTaprootCommitment(
       pubkeyBuffer[0] & 1 ? PUBKEY_PREFIX_ODD : PUBKEY_PREFIX_EVEN
     const internalPubKey = new PublicKey(pubkeyBuffer)
 
-    // Calculate tweak hash
+    // Calculate tweak hash and apply directly to public key (like lotusd AddScalar)
     const tweakHash = calculateTapTweak(internalPubKey, merkleHash)
 
     // Verify commitment matches
     const commitmentKey = new PublicKey(commitment)
-    const expectedCommitment = tweakPublicKey(internalPubKey, tweakHash)
+    const expectedCommitment = applyTweakToPublicKey(internalPubKey, tweakHash)
 
     return {
       tapleafHash: leafHash,
@@ -502,45 +523,6 @@ export function verifyTaprootCommitment(
 }
 
 /**
- * Check if a script is Pay-To-Taproot
- *
- * Valid formats:
- * - OP_SCRIPTTYPE OP_1 0x21 <PUBKEY_COMPRESSED_SIZE-byte commitment>
- * - OP_SCRIPTTYPE OP_1 0x21 <PUBKEY_COMPRESSED_SIZE-byte commitment> 0x20 <SHA256_HASH_SIZE-byte state>
- *
- * @param script - Script to check
- * @returns true if script is P2TR
- */
-export function isPayToTaproot(script: Script): boolean {
-  const buf = script.toBuffer()
-
-  if (buf.length < TAPROOT_SIZE_WITHOUT_STATE) {
-    return false
-  }
-
-  // Must start with OP_SCRIPTTYPE OP_1
-  if (buf[0] !== Opcode.OP_SCRIPTTYPE || buf[1] !== TAPROOT_SCRIPTTYPE) {
-    return false
-  }
-
-  // Next byte must be 0x21 (PUBKEY_COMPRESSED_SIZE bytes push)
-  if (buf[2] !== PUBKEY_COMPRESSED_SIZE) {
-    return false
-  }
-
-  // If exactly 36 bytes, valid without state
-  if (buf.length === TAPROOT_SIZE_WITHOUT_STATE) {
-    return true
-  }
-
-  // If has state, must be exactly 69 bytes with 0x20 (SHA256_HASH_SIZE bytes) state push
-  return (
-    buf.length === TAPROOT_SIZE_WITH_STATE &&
-    buf[TAPROOT_SIZE_WITHOUT_STATE] === SHA256_HASH_SIZE
-  )
-}
-
-/**
  * Extract the commitment public key from a Taproot script
  *
  * @param script - P2TR script
@@ -548,7 +530,7 @@ export function isPayToTaproot(script: Script): boolean {
  * @throws Error if not a valid P2TR script
  */
 export function extractTaprootCommitment(script: Script): PublicKey {
-  if (!isPayToTaproot(script)) {
+  if (!script.isTaprootOut()) {
     throw new Error('Not a valid Pay-To-Taproot script')
   }
 
@@ -587,7 +569,7 @@ export function buildPayToTaproot(
   _state?: Buffer,
 ): Script {
   throw new Error(
-    'This function has been deprecated. Used Script.buildPayToTaproot instead',
+    'This function has been deprecated. Used Script.buildTaprootOut instead',
   )
 }
 
@@ -601,7 +583,7 @@ export function buildKeyPathTaproot(internalPubKey: PublicKey): Script {
   // For key-path only, merkle root is all zeros
   const merkleRoot = Buffer.alloc(SHA256_HASH_SIZE)
   const commitment = tweakPublicKey(internalPubKey, merkleRoot)
-  return buildPayToTaproot(commitment)
+  return Script.buildTaprootOut(commitment)
 }
 
 /**
@@ -624,7 +606,7 @@ export function buildScriptPathTaproot(
 } {
   const treeInfo = buildTapTree(tree)
   const commitment = tweakPublicKey(internalPubKey, treeInfo.merkleRoot)
-  const script = buildPayToTaproot(commitment, state)
+  const script = Script.buildTaprootOut(commitment, state)
 
   return {
     script,
@@ -764,7 +746,7 @@ export function verifyTaprootSpend(
   }
 
   // Verify scriptPubkey is valid P2TR
-  if (!isPayToTaproot(scriptPubkey)) {
+  if (!scriptPubkey.isTaprootOut()) {
     return { success: false, error: 'SCRIPT_ERR_SCRIPTTYPE_MALFORMED_SCRIPT' }
   }
 
