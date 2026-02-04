@@ -106,6 +106,9 @@ export class ECDSA {
 
   /**
    * Create ECDSA from JSON string
+   *
+   * @param str - JSON string representation of ECDSA data
+   * @returns New ECDSA instance
    */
   static fromString(str: string): ECDSA {
     const obj = JSON.parse(str)
@@ -114,6 +117,8 @@ export class ECDSA {
 
   /**
    * Generate random k value
+   *
+   * @returns This ECDSA instance for method chaining
    */
   randomK(): ECDSA {
     const N = Point.getN()
@@ -127,6 +132,9 @@ export class ECDSA {
 
   /**
    * Generate deterministic k value using RFC 6979
+   *
+   * @param badrs - Number of bad r/s values to retry (default: 0)
+   * @returns This ECDSA instance for method chaining
    */
   deterministicK(badrs: number = 0): ECDSA {
     let v = Buffer.alloc(32)
@@ -171,6 +179,10 @@ export class ECDSA {
 
   /**
    * Recover public key from signature
+   *
+   * @returns The recovered public key
+   * @throws {Error} If recovery factor i is invalid (not 0-3)
+   * @throws {Error} If nR is not a valid curve point
    */
   toPublicKey(): PublicKey {
     const i = this.sig!.i
@@ -207,6 +219,8 @@ export class ECDSA {
 
   /**
    * Check for signature errors
+   *
+   * @returns Error message string if verification fails, false if valid
    */
   sigError(): string | false {
     if (!Buffer.isBuffer(this.hashbuf) || this.hashbuf.length !== 32) {
@@ -265,6 +279,10 @@ export class ECDSA {
 
   /**
    * Find signature values
+   *
+   * @param d - Private key scalar
+   * @param e - Message hash as big number
+   * @returns Signature object with s, r, and compression flag
    */
   _findSignature(d: BN, e: BN): { s: BN; r: BN; compressed?: boolean } {
     const N = Point.getN()
@@ -292,6 +310,10 @@ export class ECDSA {
 
   /**
    * Sign the hash
+   *
+   * @returns This ECDSA instance for method chaining
+   * @throws {Error} If hashbuf is not a 32-byte buffer
+   * @throws {Error} If private key is invalid
    */
   sign(): ECDSA {
     const hashbuf = this.hashbuf!
@@ -315,6 +337,8 @@ export class ECDSA {
 
   /**
    * Sign with random k
+   *
+   * @returns This ECDSA instance for method chaining
    */
   signRandomK(): ECDSA {
     this.randomK()
@@ -323,6 +347,8 @@ export class ECDSA {
 
   /**
    * Convert to JSON string
+   *
+   * @returns JSON string representation of ECDSA data
    */
   toString(): string {
     const obj: Record<string, unknown> = {}
@@ -346,6 +372,8 @@ export class ECDSA {
 
   /**
    * Verify signature
+   *
+   * @returns This ECDSA instance for method chaining
    */
   verify(): ECDSA {
     if (!this.sigError()) {
@@ -358,6 +386,11 @@ export class ECDSA {
 
   /**
    * Static sign method
+   *
+   * @param hashbuf - 32-byte hash buffer to sign
+   * @param privkey - Private key for signing
+   * @param endian - Byte endianness ('little' or 'big')
+   * @returns ECDSA signature
    */
   static sign(
     hashbuf: Buffer,
@@ -375,6 +408,12 @@ export class ECDSA {
 
   /**
    * Static verify method
+   *
+   * @param hashbuf - 32-byte hash buffer that was signed
+   * @param sig - Signature to verify
+   * @param pubkey - Public key to verify against
+   * @param endian - Byte endianness ('little' or 'big')
+   * @returns True if signature is valid, false otherwise
    */
   static verify(
     hashbuf: Buffer,
@@ -394,6 +433,9 @@ export class ECDSA {
 
   /**
    * Reverse buffer byte order
+   *
+   * @param buf - Buffer to reverse
+   * @returns Reversed buffer
    */
   private reverseBuffer(buf: Buffer): Buffer {
     const buf2 = Buffer.alloc(buf.length)

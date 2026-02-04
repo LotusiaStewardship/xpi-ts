@@ -115,7 +115,7 @@ export const MUSIG_TAG_NONCE = 'MuSig/nonce'
  * tag_hash = SHA256(tag)
  * tagged_hash = SHA256(tag_hash || tag_hash || data)
  *
- * @param tag - Tag string
+ * @param tag - Tag string for domain separation
  * @param data - Data to hash
  * @returns 32-byte hash
  */
@@ -130,8 +130,8 @@ export function musigTaggedHash(tag: string, data: Buffer): Buffer {
  *
  * L = H("KeyAgg list", P₁ || P₂ || ... || Pₙ)
  *
- * @param pubkeys - Array of public keys (33-byte compressed)
- * @returns 32-byte hash
+ * @param pubkeys - Array of public keys (33-byte compressed, sorted internally)
+ * @returns 32-byte hash of all public keys
  */
 function hashKeys(pubkeys: PublicKey[]): Buffer {
   const data = Buffer.concat(pubkeys.map(pk => pk.toBuffer()))
@@ -146,11 +146,11 @@ function hashKeys(pubkeys: PublicKey[]): Buffer {
  * Special case: If there's only one unique key, coefficient is 1
  * Special case: If key is the second key and equals first key, coefficient is 1
  *
- * @param L - Key aggregation list hash
- * @param pubkey - Public key
- * @param isSecondKey - Whether this is the second key in the list
- * @param equalsFirstKey - Whether this key equals the first key
- * @returns Key aggregation coefficient
+ * @param L - Key aggregation list hash from hashKeys()
+ * @param pubkey - Public key to compute coefficient for
+ * @param isSecondKey - Whether this is the second key in the sorted list
+ * @param equalsFirstKey - Whether this key equals the first key (for duplicate handling)
+ * @returns Key aggregation coefficient as BN
  */
 function keyAggCoeff(
   L: Buffer,
