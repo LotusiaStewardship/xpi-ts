@@ -9,6 +9,8 @@
  * Reference: lotusd/src/script/sigencoding.cpp lines 156-158
  */
 
+import type { Buffer } from 'buffer/'
+
 /**
  * Check if a signature is Schnorr format (64 bytes)
  *
@@ -63,10 +65,11 @@ export function isValidSignatureLength(sig: Buffer): boolean {
     return true
   }
 
-  // ECDSA DER signatures can be 9-73 bytes
-  // Minimum: 0x30 [len] 0x02 0x01 [r] 0x02 0x01 [s] = 8 bytes + at least 1 byte content
-  // Maximum: 0x30 0x48 0x02 0x21 [33 bytes r] 0x02 0x21 [33 bytes s] = 73 bytes
-  if (sig.length >= 9 && sig.length <= 73) {
+  // ECDSA DER signatures can be 8-72 bytes
+  // Minimum: 0x30 [len] 0x02 0x01 [r] 0x02 0x01 [s] = 8 bytes
+  // Maximum: 0x30 0x46 0x02 0x21 [33 bytes r] 0x02 0x21 [33 bytes s] = 72 bytes
+  // Reference: lotusd/src/script/sigencoding.cpp IsValidDERSignatureEncoding
+  if (sig.length >= 8 && sig.length <= 72) {
     return true
   }
 

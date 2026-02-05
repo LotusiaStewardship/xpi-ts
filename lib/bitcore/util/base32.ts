@@ -1,17 +1,32 @@
 /**
  * Base32 encoding/decoding utility
  * Migrated from bitcore-lib-xpi with ESM support and TypeScript
+ *
+ * @deprecated This is a legacy module retained for backward compatibility.
+ * Lotus does **not** use Base32 encoding for addresses - Lotus XAddresses use {@link Base58}.
+ *
+ * This module is maintained solely for the CashWeb keyserver compatibility.
+ *
+ * These external services use bech32-style encoding which requires Base32.
+ * For all Lotus-native operations, use {@link Base58} or {@link Base58Check} instead.
+ *
+ * @module base32
+ * @see {@link Base58} For Lotus address encoding
+ * @see {@link Base58Check} For Lotus address encoding with checksum
  */
 
 import { Preconditions } from './preconditions.js'
 
 /**
  * Charset containing the 32 symbols used in the base32 encoding.
+ * This is the bech32 character set used by Bitcoin Cash cash addresses.
+ * @deprecated Only used for CashWeb keyserver compatibility
  */
 const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
 
 /**
  * Inverted index mapping each symbol into its index within the charset.
+ * @deprecated Only used for CashWeb keyserver compatibility
  */
 const CHARSET_INVERSE_INDEX: Record<string, number> = {
   'q': 0,
@@ -48,11 +63,32 @@ const CHARSET_INVERSE_INDEX: Record<string, number> = {
   'l': 31,
 }
 
+/**
+ * Base32 encoding/decoding utility class.
+ *
+ * @deprecated This class is maintained for CashWeb keyserver compatibility only.
+ * Lotus addresses use {@link Base58}, not Base32. Do not use for new Lotus features.
+ *
+ * @example
+ * ```typescript
+ * // For CashWeb keyserver compatibility only
+ * const encoded = Base32.encode([0, 1, 2, 3])
+ * const decoded = Base32.decode('qpzr')
+ * ```
+ */
 export class Base32 {
   /**
    * Encodes the given array of 5-bit integers as a base32-encoded string.
+   * Uses the bech32 character set (qpzry9x8gf2tvdw0s3jn54khce6mua7l).
    *
    * @param data Array of integers between 0 and 31 inclusive.
+   * @returns Base32-encoded string
+   * @deprecated Only for CashWeb keyserver compatibility
+   *
+   * @example
+   * ```typescript
+   * Base32.encode([0, 1, 2]) // returns 'qpz'
+   * ```
    */
   static encode(data: number[]): string {
     Preconditions.checkArgument(Array.isArray(data), 'data', 'Must be Array')
@@ -71,8 +107,16 @@ export class Base32 {
 
   /**
    * Decodes the given base32-encoded string into an array of 5-bit integers.
+   * @deprecated Only for CashWeb keyserver compatibility
    *
-   * @param base32 Base32-encoded string
+   * @param base32 Base32-encoded string using bech32 charset
+   * @returns Array of 5-bit integers (0-31)
+   * @throws Error if string contains invalid characters
+   *
+   * @example
+   * ```typescript
+   * Base32.decode('qpzr') // returns [0, 1, 2, 3]
+   * ```
    */
   static decode(base32: string): number[] {
     Preconditions.checkArgument(

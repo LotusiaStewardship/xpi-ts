@@ -2,43 +2,76 @@
  * PublicKey implementation for Lotus
  * Migrated from bitcore-lib-xpi with ESM support and BigInt
  */
-
-import { BN } from './crypto/bn.js'
-import { Point } from './crypto/point.js'
-import { Hash } from './crypto/hash.js'
-import { JSUtil } from './util/js.js'
+import { BN } from './crypto/bn'
+import { Point } from './crypto/point'
+import { Hash } from './crypto/hash'
+import { BufferUtil } from './util/buffer'
+import { JSUtil } from './util/js'
 import {
   Network,
   get as getNetwork,
   defaultNetwork,
   type NetworkName,
-} from './networks.js'
-import { PrivateKey } from './privatekey.js'
-import { Address } from './address.js'
+} from './networks'
+import { PrivateKey } from './privatekey'
+import { Address } from './address'
+import type { Buffer } from 'buffer/'
 
+/**
+ * Internal data structure for public key information
+ * Used during public key construction and transformation
+ */
 export interface PublicKeyData {
+  /** The elliptic curve point representing the public key */
   point: Point
+  /** Whether the public key is in compressed format */
   compressed: boolean
+  /** Optional network the public key is associated with */
   network?: Network
 }
 
+/**
+ * Additional options for public key construction
+ */
 export interface PublicKeyExtra {
+  /** Network to associate with the public key */
   network?: Network | NetworkName
+  /** Whether to use compressed format (default: true) */
   compressed?: boolean
 }
 
+/**
+ * Plain object representation of a public key with hex-encoded coordinates
+ */
 export interface PublicKeyObject {
+  /** X coordinate as a hex string */
   x: string
+  /** Y coordinate as a hex string */
   y: string
+  /** Whether the public key is in compressed format */
   compressed: boolean
 }
 
+/**
+ * Serialized format of a public key for JSON export
+ */
 export interface PublicKeySerialized {
+  /** X coordinate as a 64-character hex string (zero-padded) */
   x: string
+  /** Y coordinate as a 64-character hex string (zero-padded) */
   y: string
+  /** Whether the public key is in compressed format */
   compressed: boolean
 }
 
+/**
+ * Valid input types for PublicKey constructor
+ * - Point: An elliptic curve point
+ * - PublicKeyObject: Object with x/y hex coordinates
+ * - string: Hex-encoded DER public key
+ * - Buffer: DER-encoded public key buffer
+ * - PrivateKey: Derive public key from private key
+ */
 export type PublicKeyInput =
   | Point
   | PublicKeyObject
@@ -46,10 +79,55 @@ export type PublicKeyInput =
   | Buffer
   | PrivateKey
 
+/** Prefix byte for compressed public key with even Y-coordinate */
+export const PUBKEY_PREFIX_EVEN = 0x02
+/** Prefix byte for compressed public key with odd Y-coordinate */
+export const PUBKEY_PREFIX_ODD = 0x03
+/** Prefix byte for uncompressed public key */
+export const PUBKEY_PREFIX_UNCOMPRESSED = 0x04
+
+/**
+ * PublicKey class for Lotus cryptocurrency
+ *
+ * Represents a public key on the secp256k1 elliptic curve. Public keys can be
+ * created from private keys, DER-encoded buffers, hex strings, or Point objects.
+ *
+ * Public keys can be in compressed (33 bytes) or uncompressed (65 bytes) format:
+ * - Compressed: prefix byte (0x02 for even Y, 0x03 for odd Y) + 32-byte X coordinate
+ * - Uncompressed: prefix byte (0x04) + 32-byte X + 32-byte Y coordinates
+ *
+ * @example
+ * ```typescript
+ * // From private key
+ * const privKey = new PrivateKey()
+ * const pubKey = PublicKey.fromPrivateKey(privKey)
+ *
+ * // From hex string
+ * const pubKey = new PublicKey('02a1633cafcc01ebfb6d78e39f687a1f0995c62fc95f51ead10a02ee0be551b5dc')
+ *
+ * // From buffer
+ * const pubKey = PublicKey.fromBuffer(buffer)
+ *
+ * // Get address
+ * const address = pubKey.toAddress()
+ * ```
+ */
 export class PublicKey {
+  /** The elliptic curve point representing this public key */
   readonly point!: Point
+  /** Whether this public key uses compressed format (33 bytes vs 65 bytes) */
   readonly compressed!: boolean
+  /** The network this public key is associated with */
   readonly network!: Network
+
+  /** Prefix byte for compressed public key with odd Y-coordinate (0x03) */
+  static readonly PrefixOddY = BufferUtil.from([PUBKEY_PREFIX_ODD])
+  /** Prefix byte for compressed public key with even Y-coordinate (0x02) */
+  static readonly PrefixEvenY = BufferUtil.from([PUBKEY_PREFIX_EVEN])
+  /** Prefix byte for uncompressed public key (0x04) */
+  static readonly PrefixUncompressed = BufferUtil.from([
+    PUBKEY_PREFIX_UNCOMPRESSED,
+  ])
 
   constructor(data: PublicKeyInput, extra?: PublicKeyExtra) {
     if (data instanceof PublicKey) {
@@ -77,7 +155,15 @@ export class PublicKey {
   }
 
   /**
-   * Internal function to differentiate between arguments passed to the constructor
+   * Internal function to differentiate between arguments passed to the constructor.
+   * Handles Point objects, PublicKeyObject with x/y coordinates, hex strings,
+   * DER-encoded buffers, and PrivateKey instances.
+   *
+   * @param data - The input data to classify and transform
+   * @param extra - Additional options like network and compression preference
+   * @returns The classified public key data with point, compressed flag, and optional network
+   * @throws {TypeError} If the data format is not recognized
+   * @throws {Error} If a valid point cannot be derived from the input
    */
   private _classifyArgs(
     data: PublicKeyInput,
@@ -99,7 +185,7 @@ export class PublicKey {
       const objectInfo = PublicKey._transformObject(data as PublicKeyObject)
       Object.assign(info, objectInfo)
     } else if (typeof data === 'string') {
-      const derInfo = PublicKey._transformDER(Buffer.from(data, 'hex'))
+      const derInfo = PublicKey._transformDER(BufferUtil.from(data, 'hex'))
       Object.assign(info, derInfo)
     } else if (PublicKey._isBuffer(data)) {
       const derInfo = PublicKey._transformDER(data)
@@ -134,7 +220,7 @@ export class PublicKey {
    * Internal function to detect if an object is a Buffer
    */
   private static _isBuffer(param: unknown): param is Buffer {
-    return Buffer.isBuffer(param) || param instanceof Uint8Array
+    return BufferUtil.isBuffer(param) || param instanceof Uint8Array
   }
 
   /**
@@ -152,7 +238,21 @@ export class PublicKey {
   }
 
   /**
-   * Internal function to transform DER into a public key point
+   * Internal function to transform DER-encoded buffer into a public key point
+   *
+   * Handles three DER encoding formats:
+   * - 0x04: Uncompressed (65 bytes: prefix + 32-byte X + 32-byte Y)
+   * - 0x02: Compressed with even Y (33 bytes: prefix + 32-byte X)
+   * - 0x03: Compressed with odd Y (33 bytes: prefix + 32-byte X)
+   *
+   * In non-strict mode, also accepts:
+   * - 0x06, 0x07: Hybrid format (treated as uncompressed)
+   *
+   * @param buf - DER-encoded public key buffer
+   * @param strict - If true, only accept standard prefixes (0x02, 0x03, 0x04)
+   * @returns Public key data with point and compression flag
+   * @throws {Error} If buffer is not a valid buffer type
+   * @throws {TypeError} If buffer length is invalid or prefix is unrecognized
    */
   private static _transformDER(
     buf: Buffer,
@@ -170,29 +270,41 @@ export class PublicKey {
     let xbuf: Buffer
     let ybuf: Buffer
 
-    if (buf[0] === 0x04 || (!strict && (buf[0] === 0x06 || buf[0] === 0x07))) {
-      xbuf = buf.subarray(1, 33)
-      ybuf = buf.subarray(33, 65)
+    // Handle uncompressed format (0x04) or hybrid format in non-strict mode (0x06, 0x07)
+    // Uncompressed: 65 bytes = 1 byte prefix + 32 bytes X + 32 bytes Y
+    if (
+      buf[0] === PUBKEY_PREFIX_UNCOMPRESSED ||
+      (!strict && (buf[0] === 0x06 || buf[0] === 0x07))
+    ) {
+      // Extract X and Y coordinates from buffer
+      xbuf = buf.slice(1, 33)
+      ybuf = buf.slice(33, 65)
+
+      // Validate buffer lengths
       if (xbuf.length !== 32 || ybuf.length !== 32 || buf.length !== 65) {
         throw new TypeError('Length of x and y must be 32 bytes')
       }
-      x = new BN(xbuf, 'be')
-      y = new BN(ybuf, 'be')
+
+      // Convert buffers to big numbers and create point
+      x = BN.fromBuffer(xbuf)
+      y = BN.fromBuffer(ybuf)
       point = new Point(x, y)
       compressed = false
-    } else if (buf[0] === 0x03) {
-      xbuf = buf.subarray(1)
-      x = new BN(xbuf, 'be')
-      const xInfo = PublicKey._transformX(true, x) // 0x03 means Y is odd
+    }
+    // Handle compressed format (0x02 for even Y, 0x03 for odd Y)
+    // Compressed: 33 bytes = 1 byte prefix + 32 bytes X coordinate
+    // The Y coordinate is derived from X using the curve equation
+    else if (buf[0] === PUBKEY_PREFIX_ODD || buf[0] === PUBKEY_PREFIX_EVEN) {
+      xbuf = buf.slice(1)
+      x = BN.fromBuffer(xbuf)
+      // Determine Y parity from prefix byte and derive full point
+      const isOdd = buf[0] === PUBKEY_PREFIX_ODD
+      const xInfo = PublicKey._transformX(isOdd, x)
       point = xInfo.point
       compressed = true
-    } else if (buf[0] === 0x02) {
-      xbuf = buf.subarray(1)
-      x = new BN(xbuf, 'be')
-      const xInfo = PublicKey._transformX(false, x) // 0x02 means Y is even
-      point = xInfo.point
-      compressed = true
-    } else {
+    }
+    // Unrecognized prefix byte
+    else {
       throw new TypeError('Invalid DER format public key')
     }
 
@@ -219,8 +331,8 @@ export class PublicKey {
    * Internal function to transform a JSON into a public key point
    */
   private static _transformObject(json: PublicKeyObject): PublicKeyData {
-    const x = new BN(json.x, 16)
-    const y = new BN(json.y, 16)
+    const x = BN.fromString(json.x, 'hex')
+    const y = BN.fromString(json.y, 'hex')
     const point = new Point(x, y)
     return {
       point: point,
@@ -277,8 +389,8 @@ export class PublicKey {
   /**
    * Instantiate a PublicKey from a DER hex encoded string
    */
-  static fromString(str: string, encoding?: string): PublicKey {
-    const buf = Buffer.from(str, (encoding as BufferEncoding) || 'hex')
+  static fromString(str: string, encoding?: BufferEncoding): PublicKey {
+    const buf = BufferUtil.from(str, encoding || 'hex')
     const info = PublicKey._transformDER(buf)
     return new PublicKey(info.point, {
       compressed: info.compressed,
@@ -324,8 +436,8 @@ export class PublicKey {
    */
   toObject(): PublicKeySerialized {
     return {
-      x: this.point.getX().toString(16).padStart(64, '0'),
-      y: this.point.getY().toString(16).padStart(64, '0'),
+      x: this.point.x.toString(16).padStart(64, '0'),
+      y: this.point.y.toString(16).padStart(64, '0'),
       compressed: this.compressed,
     }
   }
@@ -341,7 +453,7 @@ export class PublicKey {
    * Will return the public key as a BN instance
    */
   toBigNumber(): BN {
-    return this.point.getX()
+    return this.point.x
   }
 
   /**
@@ -355,24 +467,24 @@ export class PublicKey {
    * Will output the PublicKey to a DER Buffer
    */
   toDER(): Buffer {
-    const x = this.point.getX()
-    const y = this.point.getY()
+    const x = this.point.x
+    const y = this.point.y
 
-    const xbuf = x.toArrayLike(Buffer, 'be', 32)
-    const ybuf = y.toArrayLike(Buffer, 'be', 32)
+    const xbuf = x.toBuffer({ size: 32 })
+    const ybuf = y.toBuffer({ size: 32 })
 
     let prefix: Buffer
     if (!this.compressed) {
-      prefix = Buffer.from([0x04])
-      return Buffer.concat([prefix, xbuf, ybuf])
+      prefix = BufferUtil.from([0x04])
+      return BufferUtil.concat([prefix, xbuf, ybuf])
     } else {
-      const odd = y.mod(new BN(2)).eq(new BN(1))
+      const odd = y.mod(new BN(2)).eq(BN.One)
       if (odd) {
-        prefix = Buffer.from([0x03])
+        prefix = PublicKey.PrefixOddY
       } else {
-        prefix = Buffer.from([0x02])
+        prefix = PublicKey.PrefixEvenY
       }
-      return Buffer.concat([prefix, xbuf])
+      return BufferUtil.concat([prefix, xbuf])
     }
   }
 
@@ -419,7 +531,7 @@ export class PublicKey {
    * @throws Error if tweak results in invalid key
    */
   addScalar(scalar: Buffer | BN): PublicKey {
-    const scalarBN = Buffer.isBuffer(scalar) ? new BN(scalar) : scalar
+    const scalarBN = BufferUtil.isBuffer(scalar) ? new BN(scalar) : scalar
 
     // Compute scalar * G
     const G = Point.getG()
@@ -439,7 +551,20 @@ export class PublicKey {
   }
 
   /**
-   * Get the curve order N (for modular arithmetic)
+   * Get the secp256k1 curve order N
+   *
+   * The curve order N is the number of points on the elliptic curve.
+   * All scalar operations (private keys, tweaks, nonces) must be performed modulo N.
+   *
+   * N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+   *
+   * Used for:
+   * - Validating private keys are in range [1, N-1]
+   * - Modular arithmetic in signature generation (k, s values)
+   * - Computing low-S form: if s > N/2, use N - s
+   * - Taproot scalar tweaking operations
+   *
+   * @returns The curve order as a BN instance
    */
   static getN(): BN {
     return Point.getN()

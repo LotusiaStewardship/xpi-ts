@@ -2,20 +2,21 @@
  * Variable integer encoding/decoding module
  * Migrated from bitcore-lib-xpi with ESM support and TypeScript
  */
-
-import { BufferWriter } from './bufferwriter.js'
-import { BufferReader } from './bufferreader.js'
-import { BN } from '../crypto/bn.js'
+import { BufferWriter } from './bufferwriter'
+import { BufferReader } from './bufferreader'
+import { BN } from '../crypto/bn'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 export interface VarintData {
   buf?: Buffer
 }
 
 export class Varint {
-  buf: Buffer = Buffer.alloc(0)
+  buf: Buffer = BufferUtil.alloc(0)
 
   constructor(buf?: Buffer | number | BN | VarintData) {
-    if (Buffer.isBuffer(buf)) {
+    if (BufferUtil.isBuffer(buf)) {
       this.buf = buf
     } else if (typeof buf === 'number') {
       const num = buf
@@ -36,7 +37,7 @@ export class Varint {
 
   fromString(str: string): Varint {
     this.set({
-      buf: Buffer.from(str, 'hex'),
+      buf: BufferUtil.from(str, 'hex'),
     })
     return this
   }

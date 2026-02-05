@@ -13,6 +13,8 @@ import { Network, type NetworkName } from '../networks.js'
 import { pbkdf2 } from './pbkdf2.js'
 import { MnemonicError, MnemonicErrorType } from './errors.js'
 import { Words } from './words/index.js'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 /**
  * Simple Unicode normalization function
@@ -30,25 +32,25 @@ function normalizeUnicode(str: string): string {
 export type MnemonicInput = string | Buffer | number | string[]
 
 /**
- * This is an immutable class that represents a BIP39 Mnemonic code.
- * See BIP39 specification for more info: https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
- * A Mnemonic code is a group of easy to remember words used for the generation
- * of deterministic wallets. A Mnemonic can be used to generate a seed using
- * an optional passphrase, for later generate a HDPrivateKey.
+ * BIP39 Mnemonic implementation for deterministic wallet generation.
+ *
+ * A Mnemonic is a group of easy to remember words used for generating
+ * deterministic wallets. It can be used to derive a seed (with an optional
+ * passphrase) which then generates an HDPrivateKey.
+ *
+ * @see https://github.com/bitcoin/bips/blob/master/bip-0039.mediawiki
  *
  * @example
  * // generate a random mnemonic
- * var mnemonic = new Mnemonic();
- * var phrase = mnemonic.phrase;
+ * const mnemonic = new Mnemonic();
+ * const phrase = mnemonic.phrase;
  *
  * // use a different language
- * var mnemonic = new Mnemonic(Mnemonic.Words.ENGLISH);
- * var xprivkey = mnemonic.toHDPrivateKey();
+ * const mnemonic = new Mnemonic(Mnemonic.Words.ENGLISH);
+ * const xprivkey = mnemonic.toHDPrivateKey();
  *
- * @param {MnemonicInput} data - a seed, phrase, or entropy to initialize (can be skipped)
- * @param {Array=} wordlist - the wordlist to generate mnemonics from
- * @returns {Mnemonic} A new instance of Mnemonic
- * @constructor
+ * @param data - A seed, phrase, or entropy to initialize (can be skipped)
+ * @param wordlist - The wordlist to generate mnemonics from
  */
 export class Mnemonic {
   public readonly wordlist: string[]
@@ -65,7 +67,7 @@ export class Mnemonic {
     let phrase: string | undefined
     let seed: Buffer | undefined
 
-    if (Buffer.isBuffer(data)) {
+    if (BufferUtil.isBuffer(data)) {
       seed = data
       ent = seed.length * 8
     } else if (typeof data === 'string') {
@@ -143,7 +145,7 @@ export class Mnemonic {
     const cs = bin.length / 33
     const hash_bits = bin.slice(-cs)
     const nonhash_bits = bin.slice(0, bin.length - cs)
-    const buf = Buffer.alloc(nonhash_bits.length / 8)
+    const buf = BufferUtil.alloc(nonhash_bits.length / 8)
     for (let i = 0; i < nonhash_bits.length / 8; i++) {
       buf.writeUInt8(parseInt(bin.slice(i * 8, (i + 1) * 8), 2), i)
     }
@@ -211,7 +213,10 @@ export class Mnemonic {
    * @returns {Mnemonic}
    */
   static fromSeed(seed: Buffer, wordlist?: string[]): Mnemonic {
-    Preconditions.checkArgument(Buffer.isBuffer(seed), 'seed must be a Buffer.')
+    Preconditions.checkArgument(
+      BufferUtil.isBuffer(seed),
+      'seed must be a Buffer.',
+    )
     if (wordlist !== undefined) {
       Preconditions.checkArgument(
         Array.isArray(wordlist) || typeof wordlist === 'string',

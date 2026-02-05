@@ -12,7 +12,6 @@
  * This automatic detection happens in the script interpreter during signature
  * verification operations (OP_CHECKSIG, OP_CHECKMULTISIG, etc.)
  */
-
 import { Preconditions } from './util/preconditions.js'
 import { BufferReader } from './encoding/bufferreader.js'
 import { BufferWriter } from './encoding/bufferwriter.js'
@@ -24,22 +23,39 @@ import { Network, type NetworkName } from './networks.js'
 import { BitcoreError } from './errors.js'
 import { BufferUtil } from './util/buffer.js'
 import { Signature } from './crypto/signature.js'
-import { Chunk } from './chunk.js'
-import {
-  PUBKEY_COMPRESSED_SIZE,
-  TAPROOT_SIZE_WITH_STATE,
-  TAPROOT_SIZE_WITHOUT_STATE,
-  buildKeyPathTaproot,
-  buildScriptPathTaproot,
-  buildTapTree,
-} from './script/taproot.js'
+import { Chunk } from './script/chunk.js'
+import { PUBKEY_COMPRESSED_SIZE } from './script/taproot.js'
+import type { Buffer } from 'buffer/'
 
+/**
+ * Data structure representing a parsed script
+ * Contains the script chunks and optional network association
+ */
 export interface ScriptData {
+  /** Array of script chunks (opcodes and data pushes) */
   chunks: Chunk[]
+  /** Optional network this script is associated with */
   _network?: Network
 }
 
-export type ScriptInput = Buffer | string | ScriptData | PublicKey | Address
+/**
+ * Valid input types for Script constructor
+ * - Buffer: Raw script bytes
+ * - string: Hex or ASM encoded script
+ * - ScriptData: Object with chunks array
+ * - Address: Converts to appropriate output script
+ */
+export type ScriptInput = Buffer | string | ScriptData | Address
+
+/**
+ * Script type identifiers compatible with chronik-client ScriptType
+ * - 'p2pk': Pay-to-Public-Key
+ * - 'p2pkh': Pay-to-Public-Key-Hash
+ * - 'p2sh': Pay-to-Script-Hash
+ * - 'p2tr-commitment': Pay-to-Taproot without state
+ * - 'p2tr-state': Pay-to-Taproot with state
+ * - 'other': Non-standard or unknown script type
+ */
 export type ScriptType =
   | 'p2pk'
   | 'p2pkh'
@@ -48,6 +64,34 @@ export type ScriptType =
   | 'p2tr-state'
   | 'other'
 
+/**
+ * Represents a Lotus script - a stack-based programming language
+ * used to define spending conditions for transaction outputs.
+ *
+ * Scripts can be created from various input formats including:
+ * - Raw buffer data
+ * - Hex or ASM string representation
+ * - Address objects (converted to appropriate output script)
+ * - ScriptData objects containing chunk arrays
+ *
+ * The Script class supports all standard script types:
+ * - P2PK (Pay-to-Public-Key)
+ * - P2PKH (Pay-to-Public-Key-Hash)
+ * - P2SH (Pay-to-Script-Hash)
+ * - P2TR (Pay-to-Taproot) with commitment and state variants
+ *
+ * @example
+ * ```typescript
+ * // Create from address
+ * const script = new Script(address)
+ *
+ * // Create from hex string
+ * const script = new Script('76a914...')
+ *
+ * // Create empty script
+ * const script = new Script()
+ * ```
+ */
 export class Script {
   chunks!: Chunk[]
   _network?: Network
@@ -58,7 +102,14 @@ export class Script {
    * @returns A new Script instance
    */
   constructor(from?: ScriptInput) {
-    if (Buffer.isBuffer(from)) {
+    // create empty script if no input data
+    if (!from) {
+      this.chunks = []
+      return
+    }
+
+    // handle different input types
+    if (BufferUtil.isBuffer(from)) {
       return Script.fromBuffer(from)
     } else if (from instanceof Address) {
       return Script.fromAddress(from)
@@ -66,14 +117,8 @@ export class Script {
       return Script.fromBuffer(from.toBuffer())
     } else if (typeof from === 'string') {
       return Script.fromString(from)
-    } else if (
-      typeof from === 'object' &&
-      from !== null &&
-      Array.isArray((from as ScriptData).chunks)
-    ) {
-      this.set(from as ScriptData)
-    } else {
-      this.chunks = []
+    } else if (typeof from === 'object' && Array.isArray(from.chunks)) {
+      this.set(from)
     }
   }
 
@@ -112,7 +157,7 @@ export class Script {
    * @returns A new Script instance
    */
   static fromBuffer(buffer: Buffer): Script {
-    const script = new Script()
+    const script = Script.empty()
     script.chunks = []
 
     const br = new BufferReader(buffer)
@@ -121,11 +166,18 @@ export class Script {
         const opcodenum = br.readUInt8()
 
         let len: number, buf: Buffer
-        if (opcodenum > 0 && opcodenum < Opcode.OP_PUSHDATA1) {
+        if (opcodenum >= 0 && opcodenum < Opcode.OP_PUSHDATA1) {
           len = opcodenum
+          buf = br.read(len)
+          // Validate: buffer length must match declared length
+          if (buf.length !== len) {
+            throw new BitcoreError.Script.InvalidBuffer(
+              `Push data length mismatch: expected ${len}, got ${buf.length}`,
+            )
+          }
           script.chunks.push(
             new Chunk({
-              buf: br.read(len),
+              buf: buf,
               len: len,
               opcodenum: opcodenum,
             }),
@@ -133,6 +185,12 @@ export class Script {
         } else if (opcodenum === Opcode.OP_PUSHDATA1) {
           len = br.readUInt8()
           buf = br.read(len)
+          // Validate: buffer length must match declared length
+          if (buf.length !== len) {
+            throw new BitcoreError.Script.InvalidBuffer(
+              `OP_PUSHDATA1 length mismatch: expected ${len}, got ${buf.length}`,
+            )
+          }
           script.chunks.push(
             new Chunk({
               buf: buf,
@@ -143,6 +201,12 @@ export class Script {
         } else if (opcodenum === Opcode.OP_PUSHDATA2) {
           len = br.readUInt16LE()
           buf = br.read(len)
+          // Validate: buffer length must match declared length
+          if (buf.length !== len) {
+            throw new BitcoreError.Script.InvalidBuffer(
+              `OP_PUSHDATA2 length mismatch: expected ${len}, got ${buf.length}`,
+            )
+          }
           script.chunks.push(
             new Chunk({
               buf: buf,
@@ -153,6 +217,12 @@ export class Script {
         } else if (opcodenum === Opcode.OP_PUSHDATA4) {
           len = br.readUInt32LE()
           buf = br.read(len)
+          // Validate: buffer length must match declared length
+          if (buf.length !== len) {
+            throw new BitcoreError.Script.InvalidBuffer(
+              `OP_PUSHDATA4 length mismatch: expected ${len}, got ${buf.length}`,
+            )
+          }
           script.chunks.push(
             new Chunk({
               buf: buf,
@@ -199,7 +269,7 @@ export class Script {
     }
 
     // Convert hex string to buffer and use fromBuffer
-    const buffer = Buffer.from(cleanStr, 'hex')
+    const buffer = BufferUtil.from(cleanStr, 'hex')
     return Script.fromBuffer(buffer)
   }
 
@@ -220,7 +290,7 @@ export class Script {
       const opcodenum = opcode.num
 
       if (opcodenum === undefined) {
-        const buf = Buffer.from(tokens[i], 'hex')
+        const buf = BufferUtil.from(tokens[i], 'hex')
         let opcodenum: number
         const len = buf.length
         if (len >= 0 && len < Opcode.OP_PUSHDATA1) {
@@ -260,7 +330,7 @@ export class Script {
    * @returns A new Script instance
    */
   static fromHex(str: string): Script {
-    return new Script(Buffer.from(str, 'hex'))
+    return new Script(BufferUtil.from(str, 'hex'))
   }
 
   /**
@@ -280,6 +350,97 @@ export class Script {
       return Script.buildPublicKeyHashOut(address)
     }
     throw new BitcoreError.Script.UnrecognizedAddress(address)
+  }
+
+  /**
+   * Create a Script from a Chronik script payload and its type.
+   *
+   * Chronik WebSocket subscriptions and API responses use "script payloads" —
+   * the data-only portion of a script without opcodes. This method reconstructs
+   * the full output script from the payload and its type identifier.
+   *
+   * Payload formats by type:
+   * - `p2pk`:  33-byte compressed or 65-byte uncompressed public key
+   * - `p2pkh`: 20-byte public key hash (HASH160)
+   * - `p2sh`:  20-byte script hash (HASH160)
+   * - `p2tr-commitment`: 33-byte Taproot commitment public key
+   * - `p2tr-state`: 32-byte Taproot state (cannot reconstruct full script)
+   * - `other`: Raw script bytecode (returned as-is)
+   *
+   * Reference: chronik-rocksdb/src/script_payload.rs `reconstruct_script()`
+   *
+   * @param scriptType - The Chronik script type identifier
+   * @param payload - The payload as a hex string or Buffer
+   * @returns A new Script instance representing the full output script
+   * @throws Error if the payload size is invalid for the given type
+   * @throws Error if scriptType is 'p2tr-state' (partial, cannot reconstruct)
+   */
+  static fromPayload(scriptType: ScriptType, payload: string | Buffer): Script {
+    const buf: Buffer =
+      typeof payload === 'string' ? BufferUtil.from(payload, 'hex') : payload
+
+    switch (scriptType) {
+      case 'p2pk': {
+        if (buf.length !== 33 && buf.length !== 65) {
+          throw new Error(
+            `Invalid p2pk payload length: expected 33 (compressed) or 65 (uncompressed), got ${buf.length}`,
+          )
+        }
+        return Script.buildPublicKeyOut(new PublicKey(buf))
+      }
+
+      case 'p2pkh': {
+        if (buf.length !== 20) {
+          throw new Error(
+            `Invalid p2pkh payload length: expected 20, got ${buf.length}`,
+          )
+        }
+        const p2pkhScript = new Script()
+        p2pkhScript.chunks = []
+        p2pkhScript
+          .add(Opcode.OP_DUP)
+          .add(Opcode.OP_HASH160)
+          .add(buf)
+          .add(Opcode.OP_EQUALVERIFY)
+          .add(Opcode.OP_CHECKSIG)
+        return p2pkhScript
+      }
+
+      case 'p2sh': {
+        if (buf.length !== 20) {
+          throw new Error(
+            `Invalid p2sh payload length: expected 20, got ${buf.length}`,
+          )
+        }
+        const p2shScript = new Script()
+        p2shScript.add(Opcode.OP_HASH160).add(buf).add(Opcode.OP_EQUAL)
+        return p2shScript
+      }
+
+      case 'p2tr-commitment': {
+        if (buf.length !== 33) {
+          throw new Error(
+            `Invalid p2tr-commitment payload length: expected 33, got ${buf.length}`,
+          )
+        }
+        return Script.buildTaprootOut(buf)
+      }
+
+      case 'p2tr-state': {
+        throw new Error(
+          'Cannot reconstruct full script from p2tr-state payload alone; ' +
+            'the commitment is required. Use p2tr-commitment payload instead.',
+        )
+      }
+
+      case 'other': {
+        return Script.fromBuffer(buf)
+      }
+
+      default: {
+        throw new Error(`Unknown script type: ${scriptType as string}`)
+      }
+    }
   }
 
   /**
@@ -558,9 +719,9 @@ export class Script {
     let buffer: Buffer
     if (typeof data === 'string') {
       if (encoding === 'hex') {
-        buffer = Buffer.from(data, 'hex')
+        buffer = BufferUtil.from(data, 'hex')
       } else {
-        buffer = Buffer.from(data, 'utf8')
+        buffer = BufferUtil.from(data, 'utf8')
       }
     } else {
       buffer = data
@@ -718,7 +879,7 @@ export class Script {
           opcodenum: chunk.num,
         }),
       )
-    } else if (Buffer.isBuffer(chunk)) {
+    } else if (BufferUtil.isBuffer(chunk)) {
       const chunkObj = {
         buf: chunk,
         len: chunk.length,
@@ -944,10 +1105,24 @@ export class Script {
    * Check if this is a Pay-To-Taproot (P2TR) output script
    *
    * Valid formats:
-   * - OP_SCRIPTTYPE OP_1 0x21 <33-byte commitment>
-   * - OP_SCRIPTTYPE OP_1 0x21 <33-byte commitment> 0x20 <32-byte state>
+   * Without state (36 bytes):
+   *   [0] OP_SCRIPTTYPE (0x62)
+   *   [1] OP_1 (0x51)
+   *   [2] 0x21 (33) push opcode
+   *   [3-35] 33-byte commitment
+   *
+   * With state (69 bytes):
+   *   [0] OP_SCRIPTTYPE (0x62)
+   *   [1] OP_1 (0x51)
+   *   [2] 0x21 (33) push opcode
+   *   [3-35] 33-byte commitment
+   *   [36] 0x20 (32) push opcode for state
+   *   [37-68] 32-byte state
+   *
+   * The check at buf[36] === 32 verifies the state push opcode is correct.
    *
    * Reference: lotusd/src/script/taproot.cpp IsPayToTaproot()
+   * Matches lotusd: TAPROOT_SIZE_WITHOUT_STATE = 36, TAPROOT_SIZE_WITH_STATE = 69
    *
    * @returns True if script is P2TR output
    */
@@ -955,21 +1130,29 @@ export class Script {
     if (
       // Must start with OP_SCRIPTTYPE OP_1
       this.chunks[0].opcodenum !== Opcode.OP_SCRIPTTYPE ||
-      this.chunks[1].opcodenum !== Opcode.OP_1 ||
-      // Next byte must be 0x21 (33 bytes push)
-      this.chunks[2].opcodenum !== 33
+      this.chunks[1].opcodenum !== Opcode.OP_1
     ) {
       return false
     }
 
-    const buf = this.toBuffer()
-    // If exactly 36 bytes, valid without state
-    if (buf.length === TAPROOT_SIZE_WITHOUT_STATE) {
-      return true
+    // P2TR without state: exactly 3 chunks (OP_SCRIPTTYPE, OP_1, 33-byte commitment)
+    if (this.chunks.length === 3) {
+      return (
+        this.chunks[2].opcodenum === 33 && this.chunks[2].buf?.length === 33
+      )
     }
 
-    // If has state, must be exactly 69 bytes with 0x20 (32 bytes) state push
-    return buf.length === TAPROOT_SIZE_WITH_STATE && buf[36] === 32
+    // P2TR with state: exactly 4 chunks (OP_SCRIPTTYPE, OP_1, 33-byte commitment, 32-byte state)
+    if (this.chunks.length === 4) {
+      return (
+        this.chunks[2].opcodenum === 33 &&
+        this.chunks[2].buf?.length === 33 &&
+        this.chunks[3].opcodenum === 32 &&
+        this.chunks[3].buf?.length === 32
+      )
+    }
+
+    return false
   }
 
   /**
@@ -1028,32 +1211,78 @@ export class Script {
   /**
    * Get the data part of a script, if it has one
    *
-   * P2SH: The script hash
-   * P2PKH: The public key hash
-   * P2TR: The commitment
+   * Returns the key data element from standard script types:
+   * - P2SH: 20-byte script hash
+   * - P2PKH: 20-byte public key hash
+   * - P2TR: 33-byte commitment
    *
-   * @throws {Error} If the script type is not recognized
-   * @returns {Buffer} The data part of the script
+   * @deprecated This is the backwards-compatible way to get the script's hash
+   * buffer. Use `getPayload()` with the appropriate `type` parameter for all
+   * future implementations.
+   * @returns The data part of the script as a Buffer
+   * @throws Error if the script type is not recognized
    */
   getData(): Buffer {
     // P2SH
     if (this.isScriptHashOut()) {
       if (this.chunks[1] === undefined) {
-        return Buffer.alloc(0)
+        return BufferUtil.alloc(0)
       } else {
-        return Buffer.from(this.chunks[1].buf!)
+        return BufferUtil.from(this.chunks[1].buf!)
       }
     }
     // P2PKH
     if (this.isPublicKeyHashOut()) {
-      return Buffer.from(this.chunks[2].buf!)
+      return BufferUtil.from(this.chunks[2].buf!)
     }
     // P2TR
     if (this.isTaprootOut()) {
-      return Buffer.from(this.chunks[2].buf!)
+      return BufferUtil.from(this.chunks[2].buf!)
     }
 
     throw new Error('Unrecognized script type to get data from')
+  }
+
+  /**
+   * Extract the Chronik-compatible script type and payload from this script.
+   *
+   * This is the inverse of `Script.fromPayload()`. It extracts the data-only
+   * payload that Chronik uses for WebSocket subscriptions and API lookups.
+   *
+   * Returns an object with:
+   * - `type`: The ScriptType identifier
+   * - `payload`: The payload data buffer
+   * - `payloadHex`: The payload as a hex string
+   *
+   * For P2TR with state, returns the commitment payload (type `p2tr-commitment`).
+   * For non-standard scripts, returns the full bytecode (type `other`).
+   *
+   * Reference: chronik-rocksdb/src/script_payload.rs `script_payloads()`
+   *
+   * @returns Object with type, payload buffer, and payloadHex string
+   */
+  getPayload(): { type: ScriptType; payload: Buffer; payloadHex: string } {
+    let type: ScriptType
+    let payload: Buffer
+
+    if (this.isPublicKeyOut()) {
+      type = 'p2pk'
+      payload = BufferUtil.from(this.chunks[0].buf!)
+    } else if (this.isPublicKeyHashOut()) {
+      type = 'p2pkh'
+      payload = BufferUtil.from(this.chunks[2].buf!)
+    } else if (this.isScriptHashOut()) {
+      type = 'p2sh'
+      payload = BufferUtil.from(this.chunks[1].buf!)
+    } else if (this.isTaprootOut()) {
+      type = this.chunks.length === 4 ? 'p2tr-state' : 'p2tr-commitment'
+      payload = BufferUtil.from(this.chunks[2].buf!)
+    } else {
+      type = 'other'
+      payload = this.toBuffer()
+    }
+
+    return { type, payload, payloadHex: payload.toString('hex') }
   }
 
   /**
@@ -1088,7 +1317,7 @@ export class Script {
     if (this.isTaprootOut()) {
       // For Taproot, extract the 33-byte commitment public key
       const buf = this.toBuffer()
-      info.hashBuffer = buf.subarray(3, 36) // Skip OP_SCRIPTTYPE OP_1 0x21
+      info.hashBuffer = buf.slice(3, 36) // Skip OP_SCRIPTTYPE OP_1 0x21
       info.type = Address.PayToTaproot
     } else if (this.isScriptHashOut()) {
       info.hashBuffer = this.getData()
@@ -1144,7 +1373,7 @@ export class Script {
         if (this.isTaprootOut()) {
           const buf = this.toBuffer()
           // P2TR address is commitment only without state
-          const commitment = buf.subarray(3, 36)
+          const commitment = buf.slice(3, 36)
           return Address.fromTaprootCommitment(commitment, network)
         } else if (this.isPublicKeyHashOut()) {
           const hashBuffer = this.getData()
@@ -1209,8 +1438,25 @@ export class Script {
    */
   isValid(): boolean {
     try {
-      // Basic validation - check if we can parse the script
-      return this.chunks.length > 0
+      // Empty scripts are valid (e.g., OP_0 or unspendable outputs)
+      // Validate that all chunks are properly formed
+      for (const chunk of this.chunks) {
+        // Chunk must have opcodenum
+        if (chunk.opcodenum === undefined) {
+          return false
+        }
+
+        // If chunk has data, validate consistency
+        if (
+          // If chunk has a data buffer, verify length consistency
+          chunk.buf &&
+          // Length must be defined and match actual buffer length
+          (chunk.len === undefined || chunk.len !== chunk.buf.length)
+        ) {
+          return false
+        }
+      }
+      return true
     } catch (e) {
       return false
     }
@@ -1226,7 +1472,7 @@ export class Script {
       chunk =>
         new Chunk({
           opcodenum: chunk.opcodenum,
-          buf: chunk.buf ? Buffer.from(chunk.buf) : undefined,
+          buf: chunk.buf ? BufferUtil.from(chunk.buf) : undefined,
           len: chunk.len,
         }),
     )
@@ -1370,7 +1616,7 @@ export class Script {
       this.chunks.length > 3 &&
       this._isSmallIntOp(this.chunks[0].opcodenum!) &&
       this.chunks.slice(1, this.chunks.length - 2).every(function (obj) {
-        return obj.buf && Buffer.isBuffer(obj.buf)
+        return obj.buf && BufferUtil.isBuffer(obj.buf)
       }) &&
       this._isSmallIntOp(this.chunks[this.chunks.length - 2].opcodenum!) &&
       this.chunks[this.chunks.length - 1].opcodenum === Opcode.OP_CHECKMULTISIG
@@ -1393,7 +1639,9 @@ export class Script {
       this.chunks.length >= 2 &&
       this.chunks[0].opcodenum === 0 &&
       this.chunks.slice(1, this.chunks.length).every(function (obj) {
-        return obj.buf && Buffer.isBuffer(obj.buf) && Signature.isTxDER(obj.buf)
+        return (
+          obj.buf && BufferUtil.isBuffer(obj.buf) && Signature.isTxDER(obj.buf)
+        )
       })
     )
   }
@@ -1537,8 +1785,13 @@ export class Script {
 
   /**
    * Compare scripts for equality
+   *
+   * Two scripts are considered equal if they have the same number of chunks
+   * and each corresponding chunk has matching opcodes and buffer contents.
+   *
    * @param script - The script to compare against
-   * @returns True if scripts are equal
+   * @returns True if scripts are equal, false otherwise
+   * @throws Error if script is not a Script instance
    */
   equals(script: Script): boolean {
     Preconditions.checkState(
@@ -1550,13 +1803,13 @@ export class Script {
     }
     for (let i = 0; i < this.chunks.length; i++) {
       if (
-        Buffer.isBuffer(this.chunks[i].buf) &&
-        !Buffer.isBuffer(script.chunks[i].buf)
+        BufferUtil.isBuffer(this.chunks[i].buf) &&
+        !BufferUtil.isBuffer(script.chunks[i].buf)
       ) {
         return false
       }
       if (
-        Buffer.isBuffer(this.chunks[i].buf) &&
+        BufferUtil.isBuffer(this.chunks[i].buf) &&
         !BufferUtil.equals(this.chunks[i].buf!, script.chunks[i].buf!)
       ) {
         return false
@@ -1568,7 +1821,10 @@ export class Script {
   }
 
   /**
-   * Internal method to add by type
+   * Internal method to add element by type
+   * Handles different input types and adds them appropriately to the script
+   * @param obj - The element to add (Opcode, Buffer, number, string, or Script)
+   * @param prepend - Whether to prepend (true) or append (false) the element
    */
   private _addByType(
     obj: Opcode | Buffer | number | string | Script,
@@ -1580,7 +1836,7 @@ export class Script {
       this._addOpcode(obj, prepend)
     } else if (obj instanceof Opcode) {
       this._addOpcode(obj, prepend)
-    } else if (Buffer.isBuffer(obj)) {
+    } else if (BufferUtil.isBuffer(obj)) {
       this._addBuffer(obj, prepend)
     } else if (obj instanceof Script) {
       this.chunks = this.chunks.concat(obj.chunks)
@@ -1626,7 +1882,9 @@ export class Script {
   }
 
   /**
-   * Internal method to add buffer
+   * Internal method to add buffer with appropriate push opcode
+   * @param buf - The buffer to add
+   * @param prepend - Whether to prepend or append
    */
   private _addBuffer(buf: Buffer, prepend: boolean): void {
     let opcodenum: number
@@ -1805,33 +2063,4 @@ export const ScriptTypes = {
   MULTISIG_OUT: 'Pay to multisig',
   MULTISIG_IN: 'Spend from multisig',
   DATA_OUT: 'Data push',
-}
-
-/**
- * Convert script to address
- * @param script - The script to convert
- * @param network - The network to use for address
- * @returns The address object
- */
-export function toAddress(
-  script: Script,
-  network: Network | NetworkName,
-): Address {
-  const addr = script.toAddress(network)
-  if (!addr || typeof addr === 'boolean') {
-    throw new Error('Cannot convert script to address')
-  }
-  return addr as Address
-}
-
-/**
- * Create empty script
- *
- * @deprecated Use Script.empty() instead
- * @returns An empty Script instance
- */
-export function empty(): Script {
-  throw new Error(
-    'This function has been deprecated. Use Script.empty() instead.',
-  )
 }

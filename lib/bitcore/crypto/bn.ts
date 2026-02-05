@@ -5,27 +5,85 @@
  */
 
 import BN from 'bn.js'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 export interface BNWrapperOptions {
   endian?: 'little' | 'big'
   size?: number
 }
 
+/**
+ * BN (Big Number) wrapper class
+ *
+ * Provides a simplified interface to the BN.js library for arbitrary-precision
+ * integer arithmetic. This class wraps the underlying BN.js implementation and
+ * adds convenience methods for cryptographic operations commonly used in Lotus
+ * and related protocols.
+ *
+ * Features:
+ * - Conversion to/from Buffer, hex strings, and numbers
+ * - Signed magnitude (SM) buffer encoding/decoding
+ * - Arithmetic operations (add, sub, mul, div, mod, pow)
+ * - Comparison operations (eq, lt, gt, lte, gte, cmp)
+ * - Bitwise operations (and, neg)
+ * - Modular arithmetic (umod, invm, modPow)
+ *
+ * @example
+ * ```typescript
+ * // Create from number
+ * const bn1 = new BN(42)
+ *
+ * // Create from hex string
+ * const bn2 = BN.fromString('ff', 'hex')
+ *
+ * // Create from buffer
+ * const bn3 = BN.fromBuffer(BufferUtil.from([0x01, 0x02]))
+ *
+ * // Arithmetic
+ * const sum = bn1.add(bn2)
+ * const product = bn1.mul(bn2)
+ * ```
+ *
+ * @remarks
+ * Migrated from bitcore-lib-xpi with ESM support
+ */
 class BNWrapper {
   private _bn: BN
 
   // Static constants to match reference
+  /** The number zero (0) */
   static readonly Zero = new BNWrapper(0)
+  /** The number one (1) */
   static readonly One = new BNWrapper(1)
+  /** The number negative one (-1) */
   static readonly Minus1 = new BNWrapper(-1)
 
+  /**
+   * Create a new BNWrapper instance
+   *
+   * @param n - The value to create the BN from. Can be a number, string, BN instance, or BufferUtil.
+   * @param base - The base for string/buffer parsing. Can be a number (e.g., 10, 16), 'hex', 'le' (little-endian), or 'be' (big-endian).
+   *
+   * @example
+   * ```typescript
+   * // From number
+   * const bn1 = new BN(42)
+   *
+   * // From hex string
+   * const bn2 = new BN('ff', 'hex')
+   *
+   * // From buffer with little-endian
+   * const bn3 = new BN(BufferUtil.from([0x01, 0x02]), 'le')
+   * ```
+   */
   constructor(
     n: number | string | BN | Buffer,
     base?: number | 'hex' | 'le' | 'be',
   ) {
     if (n instanceof BN) {
       this._bn = n.clone()
-    } else if (Buffer.isBuffer(n)) {
+    } else if (BufferUtil.isBuffer(n)) {
       if (base === 'le' || base === 'be') {
         this._bn = new BN(n, undefined, base)
       } else {
@@ -42,7 +100,7 @@ class BNWrapper {
   /**
    * Create BN from string
    */
-  static fromString(str: string, base?: number): BNWrapper {
+  static fromString(str: string, base?: 'hex' | number): BNWrapper {
     return new BNWrapper(str, base)
   }
 
@@ -53,7 +111,7 @@ class BNWrapper {
     let buffer = buf
     if (opts?.size) {
       // Ensure buffer is exactly the specified size
-      buffer = Buffer.alloc(opts.size)
+      buffer = BufferUtil.alloc(opts.size)
       buf.copy(buffer, opts.size - buf.length)
     }
     if (opts?.endian === 'little') {
@@ -68,7 +126,7 @@ class BNWrapper {
    */
   static fromSM(buf: Buffer, opts?: BNWrapperOptions): BNWrapper {
     if (buf.length === 0) {
-      return BNWrapper.fromBuffer(Buffer.from([0]))
+      return BNWrapper.fromBuffer(BufferUtil.from([0]))
     }
 
     let endian = 'big'
@@ -134,7 +192,7 @@ class BNWrapper {
    * Reverse buffer byte order
    */
   static reversebuf(buf: Buffer): Buffer {
-    const buf2 = Buffer.alloc(buf.length)
+    const buf2 = BufferUtil.alloc(buf.length)
     for (let i = 0; i < buf.length; i++) {
       buf2[i] = buf[buf.length - 1 - i]
     }
@@ -145,14 +203,14 @@ class BNWrapper {
    * Trim buffer to natural length
    */
   static trim(buf: Buffer, natlen: number): Buffer {
-    return buf.subarray(natlen - buf.length, buf.length)
+    return buf.slice(natlen - buf.length, buf.length)
   }
 
   /**
    * Pad buffer to specified size
    */
   static pad(buf: Buffer, natlen: number, size: number): Buffer {
-    const rbuf = Buffer.alloc(size)
+    const rbuf = BufferUtil.alloc(size)
     for (let i = 0; i < buf.length; i++) {
       rbuf[rbuf.length - 1 - i] = buf[buf.length - 1 - i]
     }
@@ -212,51 +270,41 @@ class BNWrapper {
   }
 
   /**
-   * Convert to buffer
+   * Converts the BN value to a Buffer with optional size and endianness control.
+   * By default, returns big-endian format with natural length.
+   *
+   * @param opts - Optional configuration for buffer conversion
+   * @param opts.size - Fixed size for the output buffer (will pad or trim as needed)
+   * @param opts.endian - Byte order: 'little' for little-endian, 'big' for big-endian (default: 'big')
+   * @returns Buffer containing the BN value in the specified format
    */
   toBuffer(opts?: BNWrapperOptions): Buffer {
-    let buf: Buffer
+    let hex = this._bn.toString('hex', 2)
+    let buf = BufferUtil.from(hex, 'hex')
 
-    if (opts && opts.size) {
-      // Get the buffer without size specification first
-      buf = this._bn.toArrayLike(Buffer, opts.endian === 'little' ? 'le' : 'be')
-
-      // Then manually pad or trim to the correct size
-      if (buf.length === opts.size) {
-        // buf is already the right size
-      } else if (buf.length > opts.size) {
-        // Trim from the beginning (remove leading zeros)
-        buf = buf.subarray(buf.length - opts.size)
+    if (opts?.size) {
+      if (buf.length > opts.size) {
+        // Trim from beginning (remove leading zeros)
+        buf = buf.slice(buf.length - opts.size)
       } else if (buf.length < opts.size) {
-        // Pad with zeros at the beginning
-        const padded = Buffer.alloc(opts.size)
+        // Pad with zeros at beginning
+        const padded = BufferUtil.alloc(opts.size)
         buf.copy(padded, opts.size - buf.length)
         buf = padded
       }
-    } else {
-      // Use BN.js toArrayLike method for default behavior
-      buf = this._bn.toArrayLike(
-        Buffer,
-        opts?.endian === 'little' ? 'le' : 'be',
-      )
+    }
+
+    if (opts?.endian === 'little') {
+      buf = BufferUtil.from(buf).reverse()
     }
 
     return buf
   }
 
   /**
-   * Convert to array-like object (compatibility with BN.js)
-   */
-  toArrayLike(
-    ArrayType: typeof Buffer,
-    endian?: 'le' | 'be',
-    length?: number,
-  ): Buffer {
-    return this._bn.toArrayLike(ArrayType, endian || 'be', length)
-  }
-
-  /**
    * Multiply by another BN
+   * @param r - The BNWrapper to multiply with
+   * @returns A new BNWrapper containing the product
    */
   mul(r: BNWrapper): BNWrapper {
     return new BNWrapper(this._bn.mul(r._bn))
@@ -264,6 +312,8 @@ class BNWrapper {
 
   /**
    * Subtract another BN
+   * @param r - The BNWrapper to subtract
+   * @returns A new BNWrapper containing the difference
    */
   sub(r: BNWrapper): BNWrapper {
     return new BNWrapper(this._bn.sub(r._bn))
@@ -271,6 +321,8 @@ class BNWrapper {
 
   /**
    * Power operation
+   * @param r - The exponent as a BNWrapper
+   * @returns A new BNWrapper containing this raised to the power of r
    */
   pow(r: BNWrapper): BNWrapper {
     return new BNWrapper(this._bn.pow(r._bn))
@@ -278,6 +330,8 @@ class BNWrapper {
 
   /**
    * Divide by another BN
+   * @param r - The BNWrapper to divide by
+   * @returns A new BNWrapper containing the quotient
    */
   div(r: BNWrapper): BNWrapper {
     return new BNWrapper(this._bn.div(r._bn))
@@ -285,7 +339,10 @@ class BNWrapper {
 
   /**
    * Modular exponentiation: computes (this^exponent) mod modulus
-   * Uses square-and-multiply algorithm for efficiency
+   * Uses BN.js red reduction context for efficient modular arithmetic
+   * @param exponent - The exponent to raise this value to
+   * @param modulus - The modulus for the operation
+   * @returns A new BNWrapper containing (this^exponent) mod modulus
    */
   modPow(exponent: BNWrapper, modulus: BNWrapper): BNWrapper {
     // BN.js doesn't have a built-in modPow, so we implement square-and-multiply
@@ -296,7 +353,9 @@ class BNWrapper {
   }
 
   /**
-   * Bitwise AND
+   * Bitwise AND operation
+   * @param other - The BNWrapper or number to AND with
+   * @returns A new BNWrapper containing the result
    */
   and(other: BNWrapper | number): BNWrapper {
     const otherBN = other instanceof BNWrapper ? other._bn : new BN(other)
@@ -304,14 +363,18 @@ class BNWrapper {
   }
 
   /**
-   * Negate the BN
+   * Negate the BN (return -this)
+   * @returns A new BNWrapper containing the negated value
    */
   neg(): BNWrapper {
     return new BNWrapper(this._bn.neg())
   }
 
   /**
-   * Modular inverse
+   * Compute the modular multiplicative inverse
+   * Finds x such that (this * x) mod r = 1
+   * @param r - The modulus
+   * @returns A new BNWrapper containing the modular inverse
    */
   invm(r: BNWrapper): BNWrapper {
     return new BNWrapper(this._bn.invm(r._bn))
@@ -319,6 +382,8 @@ class BNWrapper {
 
   /**
    * Check if equal to another BN
+   * @param other - The BNWrapper to compare with
+   * @returns true if this equals other
    */
   eq(other: BNWrapper): boolean {
     return this._bn.eq(other._bn)
@@ -326,6 +391,8 @@ class BNWrapper {
 
   /**
    * Check if less than another BN
+   * @param other - The BNWrapper to compare with
+   * @returns true if this < other
    */
   lt(other: BNWrapper): boolean {
     return this._bn.lt(other._bn)
@@ -333,6 +400,8 @@ class BNWrapper {
 
   /**
    * Check if greater than another BN
+   * @param other - The BNWrapper to compare with
+   * @returns true if this > other
    */
   gt(other: BNWrapper): boolean {
     return this._bn.gt(other._bn)
@@ -340,6 +409,8 @@ class BNWrapper {
 
   /**
    * Check if less than or equal to another BN
+   * @param other - The BNWrapper to compare with
+   * @returns true if this <= other
    */
   lte(other: BNWrapper): boolean {
     return this._bn.lte(other._bn)
@@ -347,34 +418,40 @@ class BNWrapper {
 
   /**
    * Check if greater than or equal to another BN
+   * @param other - The BNWrapper to compare with
+   * @returns true if this >= other
    */
   gte(other: BNWrapper): boolean {
     return this._bn.gte(other._bn)
   }
 
   /**
-   * Check if zero
+   * Check if the value is zero
+   * @returns true if this equals 0
    */
   isZero(): boolean {
     return this._bn.isZero()
   }
 
   /**
-   * Check if negative
+   * Check if the value is negative
+   * @returns true if this < 0
    */
   isNeg(): boolean {
     return this._bn.isNeg()
   }
 
   /**
-   * Check if odd
+   * Check if the value is odd
+   * @returns true if the least significant bit is 1
    */
   isOdd(): boolean {
     return this._bn.isOdd()
   }
 
   /**
-   * Check if even
+   * Check if the value is even
+   * @returns true if the least significant bit is 0
    */
   isEven(): boolean {
     return this._bn.isEven()
@@ -388,19 +465,19 @@ class BNWrapper {
     if (this.cmp(BNWrapper.Zero) === -1) {
       buf = this.neg().toBuffer()
       if (buf[0] & 0x80) {
-        buf = Buffer.concat([Buffer.from([0x80]), buf])
+        buf = BufferUtil.concat([BufferUtil.from([0x80]), buf])
       } else {
         buf[0] = buf[0] | 0x80
       }
     } else {
       buf = this.toBuffer()
       if (buf[0] & 0x80) {
-        buf = Buffer.concat([Buffer.from([0x00]), buf])
+        buf = BufferUtil.concat([BufferUtil.from([0x00]), buf])
       }
     }
 
     if (buf.length === 1 && buf[0] === 0) {
-      buf = Buffer.from([])
+      buf = BufferUtil.from([])
     }
     return buf
   }

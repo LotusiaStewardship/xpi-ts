@@ -14,10 +14,6 @@ export class JSUtil {
     return /^[0-9a-fA-F]+$/.test(value)
   }
 
-  static isHexaString(str: string): boolean {
-    return typeof str === 'string' && /^[0-9a-fA-F]+$/.test(str)
-  }
-
   /**
    * Test if an argument is a valid JSON object
    */

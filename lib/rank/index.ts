@@ -3,6 +3,7 @@
  * Github: https://github.com/LotusiaStewardship
  * License: MIT
  */
+import { Buffer } from 'buffer/'
 import {
   MAX_OP_RETURN_DATA,
   RNKC_MIN_DATA_LENGTH,
@@ -280,15 +281,14 @@ export function toProfileIdBuf(
   switch (platform) {
     case 'lotusia': {
       const profileIdHex = Buffer.from(profileId, 'hex')
-      profileBuf.write(
-        profileId,
-        profileIdSpec.len - profileIdHex.length,
-        'hex',
-      )
+      profileIdHex.copy(profileBuf, profileIdSpec.len - profileIdHex.length)
       break
     }
     case 'twitter':
-      profileBuf.write(profileId, profileIdSpec.len - profileId.length, 'utf8')
+      Buffer.from(profileId, 'utf8').copy(
+        profileBuf,
+        profileIdSpec.len - profileId.length,
+      )
       break
     default:
       return null
@@ -345,7 +345,7 @@ export function toPlatformBuf(
 export function toPlatformUTF8(
   platformBuf: Buffer,
 ): ScriptChunkPlatformUTF8 | undefined {
-  return SCRIPT_CHUNK_PLATFORM.get(platformBuf.readUint8())
+  return SCRIPT_CHUNK_PLATFORM.get(platformBuf.readUInt8(0))
 }
 /**
  * Convert the UTF-8 sentiment name to the defined 1-byte OP code
@@ -362,7 +362,7 @@ export function toSentimentOpCode(sentiment: ScriptChunkSentimentUTF8) {
 export function toSentimentUTF8(
   sentimentBuf: Buffer,
 ): ScriptChunkSentimentUTF8 | undefined {
-  return SCRIPT_CHUNK_SENTIMENT.get(sentimentBuf.readUInt8())
+  return SCRIPT_CHUNK_SENTIMENT.get(sentimentBuf.readUInt8(0))
 }
 /**
  * Convert the comment buffer to a UTF-8 string
@@ -499,7 +499,7 @@ export function toScriptRNKC({
   scriptBufs.push(Buffer.from(scriptRNKC, 'hex'))
 
   // create the comment script(s)
-  const commentBuf1 = commentBuf.subarray(0, MAX_OP_RETURN_DATA)
+  const commentBuf1 = commentBuf.slice(0, MAX_OP_RETURN_DATA)
   // create the first comment script
   let scriptComment = OP_RETURN + OP_PUSHDATA1
   // Append the push op for comment length
@@ -510,7 +510,7 @@ export function toScriptRNKC({
 
   // create the second comment script if necessary
   if (commentBuf.length > MAX_OP_RETURN_DATA) {
-    const commentBuf2 = commentBuf.subarray(MAX_OP_RETURN_DATA)
+    const commentBuf2 = commentBuf.slice(MAX_OP_RETURN_DATA)
     let scriptComment2 = OP_RETURN + OP_PUSHDATA1
     // Append the push op for comment length
     scriptComment2 += toHex(commentBuf2.length)
@@ -576,7 +576,7 @@ export class ScriptProcessor {
    */
   private processLokad(): ScriptChunkLokadUTF8 | undefined {
     // LOKAD is 4 bytes at offset 2 (OP_RETURN <PUSH OP> <4-byte LOKAD>)
-    const lokadBuf = this.script.subarray(2, 6)
+    const lokadBuf = this.script.slice(2, 6)
     const lokad = SCRIPT_CHUNK_LOKAD.get(lokadBuf.readUInt32BE(0))
     if (!lokad) {
       return undefined
@@ -593,11 +593,11 @@ export class ScriptProcessor {
     if (!chunk || chunk.offset === null) {
       return undefined
     }
-    const sentimentBuf = this.script.subarray(
+    const sentimentBuf = this.script.slice(
       chunk.offset!,
       chunk.offset! + chunk.len!,
     )
-    return SCRIPT_CHUNK_SENTIMENT.get(sentimentBuf.readUInt8())
+    return SCRIPT_CHUNK_SENTIMENT.get(sentimentBuf.readUInt8(0))
   }
 
   /**
@@ -609,11 +609,11 @@ export class ScriptProcessor {
     if (!chunk || chunk.offset === null) {
       return undefined
     }
-    const platformBuf = this.script.subarray(
+    const platformBuf = this.script.slice(
       chunk.offset!,
       chunk.offset! + chunk.len!,
     )
-    const platform = SCRIPT_CHUNK_PLATFORM.get(platformBuf.readUInt8())
+    const platform = SCRIPT_CHUNK_PLATFORM.get(platformBuf.readUInt8(0))
     if (!platform) {
       return undefined
     }
@@ -638,7 +638,7 @@ export class ScriptProcessor {
     }
 
     const profileIdSpec = platformSpec.profileId
-    const profileIdBuf = this.script.subarray(
+    const profileIdBuf = this.script.slice(
       chunk.offset,
       chunk.offset + profileIdSpec.len,
     )
@@ -680,7 +680,7 @@ export class ScriptProcessor {
     // Calculate postId offset: profileId offset + profileId length + push opcode (1 byte)
     const postIdSpec = platformSpec.postId
     const postIdOffset = profileIdChunk.offset + platformSpec.profileId.len + 1
-    const postIdBuf = this.script.subarray(
+    const postIdBuf = this.script.slice(
       postIdOffset,
       postIdOffset + postIdSpec.len,
     )
@@ -719,7 +719,7 @@ export class ScriptProcessor {
         break
       }
       // Concatenate the comment buffer with the script data
-      commentBuf = Buffer.concat([commentBuf, script.subarray(3, 3 + dataSize)])
+      commentBuf = Buffer.concat([commentBuf, script.slice(3, 3 + dataSize)])
     }
     if (!commentBuf) {
       return null

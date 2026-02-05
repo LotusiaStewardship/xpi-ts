@@ -22,13 +22,15 @@
  * Migrated from bitcore-lib-xpi with ESM support
  */
 
-import { BN } from './bn.js'
-import { Point } from './point.js'
-import { Signature } from './signature.js'
-import { Hash } from './hash.js'
-import { Random } from './random.js'
-import { PrivateKey } from '../privatekey.js'
-import { PublicKey } from '../publickey.js'
+import { BN } from './bn'
+import { Point } from './point'
+import { Signature } from './signature'
+import { Hash } from './hash'
+import { Random } from './random'
+import { PrivateKey } from '../privatekey'
+import { PublicKey } from '../publickey'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 export interface ECDSAData {
   hashbuf?: Buffer
@@ -124,7 +126,7 @@ export class ECDSA {
     const N = Point.getN()
     let k: BN
     do {
-      k = new BN(Random.getRandomBuffer(32), 'be')
+      k = BN.fromBuffer(Random.getRandomBuffer(32))
     } while (!(k.lt(N) && k.gt(new BN(0))))
     this.k = k
     return this
@@ -137,9 +139,9 @@ export class ECDSA {
    * @returns This ECDSA instance for method chaining
    */
   deterministicK(badrs: number = 0): ECDSA {
-    let v = Buffer.alloc(32)
+    let v = BufferUtil.alloc(32)
     v.fill(0x01)
-    let k = Buffer.alloc(32)
+    let k = BufferUtil.alloc(32)
     k.fill(0x00)
 
     const x = this.privkey!.toBuffer()
@@ -149,27 +151,24 @@ export class ECDSA {
         : this.hashbuf!
 
     k = Hash.sha256hmac(
-      Buffer.concat([v, Buffer.from([0x00]), x, hashbuf]),
+      BufferUtil.concat([v, BufferUtil.from([0x00]), x, hashbuf]),
       k,
-    ) as Buffer<ArrayBuffer>
-    v = Hash.sha256hmac(v, k) as Buffer<ArrayBuffer>
+    )
+    v = Hash.sha256hmac(v, k)
     k = Hash.sha256hmac(
-      Buffer.concat([v, Buffer.from([0x01]), x, hashbuf]),
+      BufferUtil.concat([v, BufferUtil.from([0x01]), x, hashbuf]),
       k,
-    ) as Buffer<ArrayBuffer>
-    v = Hash.sha256hmac(v, k) as Buffer<ArrayBuffer>
-    v = Hash.sha256hmac(v, k) as Buffer<ArrayBuffer>
+    )
+    v = Hash.sha256hmac(v, k)
+    v = Hash.sha256hmac(v, k)
 
     let T = new BN(v, 'be')
     const N = Point.getN()
 
     for (let i = 0; i < badrs || !(T.lt(N) && T.gt(new BN(0))); i++) {
-      k = Hash.sha256hmac(
-        Buffer.concat([v, Buffer.from([0x00])]),
-        k,
-      ) as Buffer<ArrayBuffer>
-      v = Hash.sha256hmac(v, k) as Buffer<ArrayBuffer>
-      v = Hash.sha256hmac(v, k) as Buffer<ArrayBuffer>
+      k = Hash.sha256hmac(BufferUtil.concat([v, BufferUtil.from([0x00])]), k)
+      v = Hash.sha256hmac(v, k)
+      v = Hash.sha256hmac(v, k)
       T = new BN(v, 'be')
     }
 
@@ -223,7 +222,7 @@ export class ECDSA {
    * @returns Error message string if verification fails, false if valid
    */
   sigError(): string | false {
-    if (!Buffer.isBuffer(this.hashbuf) || this.hashbuf.length !== 32) {
+    if (!BufferUtil.isBuffer(this.hashbuf) || this.hashbuf.length !== 32) {
       return 'hashbuf must be a 32 byte buffer'
     }
 
@@ -246,7 +245,7 @@ export class ECDSA {
       return 'p is infinity'
     }
 
-    if (p.getX().umod(n).cmp(r) !== 0) {
+    if (p.x.umod(n).cmp(r) !== 0) {
       return 'Invalid signature'
     } else {
       return false
@@ -297,7 +296,7 @@ export class ECDSA {
       badrs++
       k = this.k!
       Q = G.mul(k)
-      r = Q.getX().umod(N)
+      r = Q.x.umod(N)
       s = k
         .invm(N)
         .mul(e.add(d.mul(r)))
@@ -323,7 +322,7 @@ export class ECDSA {
     if (!hashbuf || !privkey || !d) {
       throw new Error('invalid parameters')
     }
-    if (!Buffer.isBuffer(hashbuf) || hashbuf.length !== 32) {
+    if (!BufferUtil.isBuffer(hashbuf) || hashbuf.length !== 32) {
       throw new Error('hashbuf must be a 32 byte buffer')
     }
 
@@ -438,7 +437,7 @@ export class ECDSA {
    * @returns Reversed buffer
    */
   private reverseBuffer(buf: Buffer): Buffer {
-    const buf2 = Buffer.alloc(buf.length)
+    const buf2 = BufferUtil.alloc(buf.length)
     for (let i = 0; i < buf.length; i++) {
       buf2[i] = buf[buf.length - 1 - i]
     }

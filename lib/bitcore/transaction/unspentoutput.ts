@@ -1,10 +1,12 @@
-import { Preconditions } from '../util/preconditions.js'
-import { JSUtil } from '../util/js.js'
-import { Script } from '../script.js'
-import { Address } from '../address.js'
-import { PublicKey } from '../publickey.js'
-import { Unit } from '../unit.js'
-import type { MuSigKeyAggContext } from '../crypto/musig2.js'
+import { Preconditions } from '../util/preconditions'
+import { BufferUtil } from '../util/buffer'
+import { JSUtil } from '../util/js'
+import { Script } from '../script'
+import { Address } from '../address'
+import { PublicKey } from '../publickey'
+import { Unit } from '../unit'
+import type { MuSig2KeyAggContext } from '../crypto/musig2'
+import type { Buffer } from 'buffer/'
 
 export interface UnspentOutputData {
   txid?: string
@@ -20,7 +22,7 @@ export interface UnspentOutputData {
   internalPubKey?: PublicKey | Buffer | string
   merkleRoot?: Buffer
   // MuSig2 Taproot specific fields
-  keyAggContext?: MuSigKeyAggContext
+  keyAggContext?: MuSig2KeyAggContext
   mySignerIndex?: number
 }
 
@@ -47,7 +49,7 @@ export class UnspentOutput {
   readonly internalPubKey?: PublicKey
   readonly merkleRoot?: Buffer
   // MuSig2 Taproot specific properties
-  readonly keyAggContext?: MuSigKeyAggContext
+  readonly keyAggContext?: MuSig2KeyAggContext
   readonly mySignerIndex?: number
 
   constructor(data: UnspentOutputData) {
@@ -59,7 +61,7 @@ export class UnspentOutput {
     const address = data.address ? new Address(data.address) : undefined
     const txId = data.txid || data.txId
 
-    if (!txId || !JSUtil.isHexaString(txId) || txId.length > 64) {
+    if (!txId || !JSUtil.isHexa(txId) || txId.length > 64) {
       throw new Error('Invalid TXID in object: ' + JSON.stringify(data))
     }
 
@@ -107,7 +109,7 @@ export class UnspentOutput {
     if (data.internalPubKey) {
       if (data.internalPubKey instanceof PublicKey) {
         this.internalPubKey = data.internalPubKey
-      } else if (Buffer.isBuffer(data.internalPubKey)) {
+      } else if (BufferUtil.isBuffer(data.internalPubKey)) {
         this.internalPubKey = new PublicKey(data.internalPubKey)
       } else if (typeof data.internalPubKey === 'string') {
         this.internalPubKey = new PublicKey(data.internalPubKey)
@@ -139,7 +141,7 @@ export class UnspentOutput {
    */
   isValid(): boolean {
     return (
-      JSUtil.isHexaString(this.txId) &&
+      JSUtil.isHexa(this.txId) &&
       this.txId.length === 64 &&
       this.outputIndex >= 0 &&
       this.satoshis > 0 &&

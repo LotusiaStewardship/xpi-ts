@@ -1,10 +1,8 @@
 /**
- * Copyright 2025 The Lotusia Stewardship
+ * Copyright 2025-2026 The Lotusia Stewardship
  * Github: https://github.com/LotusiaStewardship
  * License: MIT
- */
-
-/**
+ *
  * MuSig2 Multi-Signature Scheme for Lotus
  *
  * Implements MuSig2 (BIP327) adapted for Lotus Schnorr signatures.
@@ -31,12 +29,14 @@
  * @module MuSig2
  */
 
-import { PublicKey } from '../publickey.js'
-import { PrivateKey } from '../privatekey.js'
-import { Point } from './point.js'
-import { BN } from './bn.js'
-import { Hash } from './hash.js'
-import { Signature } from './signature.js'
+import { PublicKey } from '../publickey'
+import { PrivateKey } from '../privatekey'
+import { Point } from './point'
+import { BN } from './bn'
+import { Hash } from './hash'
+import { Signature } from './signature'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 // ============================================================================
 // Type Definitions
@@ -48,12 +48,12 @@ import { Signature } from './signature.js'
  * Contains the aggregated public key and per-key coefficients needed for
  * signing and verification.
  */
-export interface MuSigKeyAggContext {
+export interface MuSig2KeyAggContext {
   /** Original public keys in order */
   pubkeys: PublicKey[]
 
-  /** Key aggregation coefficient for each signer */
-  keyAggCoeff: Map<number, BN>
+  /** Key aggregation coefficient for each public key (keyed by pubkey string) */
+  keyAggCoeff: Map<string, BN>
 
   /** Aggregated public key Q = Σ(aᵢ · Pᵢ) */
   aggregatedPubKey: PublicKey
@@ -64,7 +64,7 @@ export interface MuSigKeyAggContext {
  *
  * Each signer generates two nonce pairs for security against Wagner's attack.
  */
-export interface MuSigNonce {
+export interface MuSig2Nonce {
   /** Secret nonces (k₁, k₂) - MUST be kept secret and cleared after use */
   secretNonces: [BN, BN]
 
@@ -77,7 +77,7 @@ export interface MuSigNonce {
  *
  * Result of combining all signers' public nonces.
  */
-export interface MuSigAggregatedNonce {
+export interface MuSig2AggregatedNonce {
   /** Aggregated first nonce R₁ = Σ(R₁,ᵢ) */
   R1: Point
 
@@ -90,19 +90,19 @@ export interface MuSigAggregatedNonce {
 // ============================================================================
 
 /** Tag for key aggregation list hash (BIP327) */
-export const MUSIG_TAG_KEYSORT = 'KeyAgg list'
+export const MUSIG2_TAG_KEYSORT = 'KeyAgg list'
 
 /** Tag for key aggregation coefficient (BIP327) */
-export const MUSIG_TAG_KEYAGG_COEFF = 'KeyAgg coefficient'
+export const MUSIG2_TAG_KEYAGG_COEFF = 'KeyAgg coefficient'
 
 /** Tag for nonce aggregation coefficient (BIP327) */
-export const MUSIG_TAG_NONCE_COEFF = 'MuSig/noncecoef'
+export const MUSIG2_TAG_NONCE_COEFF = 'MuSig/noncecoef'
 
 /** Tag for auxiliary random data in nonce generation (BIP327) */
-const MUSIG_TAG_AUX = 'MuSig/aux'
+export const MUSIG2_TAG_AUX = 'MuSig/aux'
 
 /** Tag for nonce generation (BIP327) */
-export const MUSIG_TAG_NONCE = 'MuSig/nonce'
+export const MUSIG2_TAG_NONCE = 'MuSig/nonce'
 
 // ============================================================================
 // Helper Functions
@@ -119,9 +119,9 @@ export const MUSIG_TAG_NONCE = 'MuSig/nonce'
  * @param data - Data to hash
  * @returns 32-byte hash
  */
-export function musigTaggedHash(tag: string, data: Buffer): Buffer {
-  const tagHash = Hash.sha256(Buffer.from(tag, 'utf8'))
-  const combined = Buffer.concat([tagHash, tagHash, data])
+export function muSig2TaggedHash(tag: string, data: Buffer): Buffer {
+  const tagHash = Hash.sha256(BufferUtil.from(tag, 'utf8'))
+  const combined = BufferUtil.concat([tagHash, tagHash, data])
   return Hash.sha256(combined)
 }
 
@@ -134,8 +134,8 @@ export function musigTaggedHash(tag: string, data: Buffer): Buffer {
  * @returns 32-byte hash of all public keys
  */
 function hashKeys(pubkeys: PublicKey[]): Buffer {
-  const data = Buffer.concat(pubkeys.map(pk => pk.toBuffer()))
-  return musigTaggedHash(MUSIG_TAG_KEYSORT, data)
+  const data = BufferUtil.concat(pubkeys.map(pk => pk.toBuffer()))
+  return muSig2TaggedHash(MUSIG2_TAG_KEYSORT, data)
 }
 
 /**
@@ -160,12 +160,12 @@ function keyAggCoeff(
 ): BN {
   // Special case: second key equals first key → coefficient = 1
   if (isSecondKey && equalsFirstKey) {
-    return new BN(1)
+    return BN.One
   }
 
-  const data = Buffer.concat([L, pubkey.toBuffer()])
-  const hash = musigTaggedHash(MUSIG_TAG_KEYAGG_COEFF, data)
-  return new BN(hash, 'be')
+  const data = BufferUtil.concat([L, pubkey.toBuffer()])
+  const hash = muSig2TaggedHash(MUSIG2_TAG_KEYAGG_COEFF, data)
+  return BN.fromBuffer(hash)
 }
 
 // ============================================================================
@@ -202,11 +202,11 @@ function keyAggCoeff(
  * const bob = new PrivateKey()
  *
  * // Keys will be sorted automatically - order doesn't matter
- * const ctx = musigKeyAgg([alice.publicKey, bob.publicKey])
+ * const ctx = muSig2KeyAgg([alice.publicKey, bob.publicKey])
  * console.log('Aggregated key:', ctx.aggregatedPubKey.toString())
  * ```
  */
-export function musigKeyAgg(pubkeys: PublicKey[]): MuSigKeyAggContext {
+export function muSig2KeyAgg(pubkeys: PublicKey[]): MuSig2KeyAggContext {
   if (pubkeys.length === 0) {
     throw new Error('Cannot aggregate zero public keys')
   }
@@ -230,7 +230,9 @@ export function musigKeyAgg(pubkeys: PublicKey[]): MuSigKeyAggContext {
   const L = hashKeys(sortedPubkeys)
 
   // Step 2: Compute key aggregation coefficients (using sorted keys)
-  const keyAggCoeffMap = new Map<number, BN>()
+  // IMPORTANT: Map is keyed by public key string, not by index
+  // This ensures correct coefficient lookup regardless of original key order
+  const keyAggCoeffMap = new Map<string, BN>()
   const firstKey = sortedPubkeys[0]
 
   for (let i = 0; i < sortedPubkeys.length; i++) {
@@ -238,7 +240,8 @@ export function musigKeyAgg(pubkeys: PublicKey[]): MuSigKeyAggContext {
     const equalsFirst = sortedPubkeys[i].toString() === firstKey.toString()
 
     const coeff = keyAggCoeff(L, sortedPubkeys[i], isSecond, equalsFirst)
-    keyAggCoeffMap.set(i, coeff)
+    // Use public key string as the map key for correct lookup during signing
+    keyAggCoeffMap.set(sortedPubkeys[i].toString(), coeff)
   }
 
   // Step 3: Compute aggregated public key Q = Σ(aᵢ · Pᵢ) (using sorted keys)
@@ -246,8 +249,8 @@ export function musigKeyAgg(pubkeys: PublicKey[]): MuSigKeyAggContext {
   const n = Point.getN()
 
   for (let i = 0; i < sortedPubkeys.length; i++) {
-    const coeff = keyAggCoeffMap.get(i)!
     const pk = sortedPubkeys[i]
+    const coeff = keyAggCoeffMap.get(pk.toString())!
 
     // aᵢ · Pᵢ
     const term = pk.point.mul(coeff.umod(n))
@@ -335,12 +338,12 @@ export function musigKeyAgg(pubkeys: PublicKey[]): MuSigKeyAggContext {
  * )
  * ```
  */
-export function musigNonceGen(
+export function muSig2NonceGen(
   privateKey: PrivateKey,
   aggregatedPubKey: PublicKey,
   message?: Buffer,
   extraInput?: Buffer,
-): MuSigNonce {
+): MuSig2Nonce {
   const G = Point.getG()
   const n = Point.getN()
 
@@ -351,37 +354,37 @@ export function musigNonceGen(
   // - Auditable: Can be unit tested
   //
   // Session ID = H("MuSig/aux", privkey || aggregatedPubKey || message || extraInput)
-  const sessionData = Buffer.concat([
-    privateKey.bn.toArrayLike(Buffer, 'be', 32),
+  const sessionData = BufferUtil.concat([
+    privateKey.bn.toBuffer({ size: 32 }),
     aggregatedPubKey.toBuffer(),
-    message || Buffer.alloc(32),
-    extraInput || Buffer.alloc(32),
+    message || BufferUtil.alloc(32),
+    extraInput || BufferUtil.alloc(32),
   ])
 
   // Apply auxiliary hash for domain separation (BIP327 recommendation)
-  const auxHash = musigTaggedHash(MUSIG_TAG_AUX, sessionData)
+  const auxHash = muSig2TaggedHash(MUSIG2_TAG_AUX, sessionData)
 
   // Generate two independent nonces using tagged hash with auxiliary data
   // This is deterministic but can be made non-deterministic by providing random extraInput
-  const rand1 = musigTaggedHash(
-    MUSIG_TAG_NONCE,
-    Buffer.concat([auxHash, Buffer.from([0x01])]),
+  const rand1 = muSig2TaggedHash(
+    MUSIG2_TAG_NONCE,
+    BufferUtil.concat([auxHash, BufferUtil.from([0x01])]),
   )
-  const rand2 = musigTaggedHash(
-    MUSIG_TAG_NONCE,
-    Buffer.concat([auxHash, Buffer.from([0x02])]),
+  const rand2 = muSig2TaggedHash(
+    MUSIG2_TAG_NONCE,
+    BufferUtil.concat([auxHash, BufferUtil.from([0x02])]),
   )
 
   // Convert to scalars (mod n)
-  let k1 = new BN(rand1, 'be').umod(n)
-  let k2 = new BN(rand2, 'be').umod(n)
+  let k1 = BN.fromBuffer(rand1).umod(n)
+  let k2 = BN.fromBuffer(rand2).umod(n)
 
   // Ensure nonces are not zero
   if (k1.isZero()) {
-    k1 = new BN(1)
+    k1 = BN.One
   }
   if (k2.isZero()) {
-    k2 = new BN(1)
+    k2 = BN.One
   }
 
   // Compute public nonces R1 = k1*G, R2 = k2*G
@@ -424,9 +427,9 @@ export function musigNonceGen(
  * ])
  * ```
  */
-export function musigNonceAgg(
+export function muSig2NonceAgg(
   publicNonces: Array<[Point, Point]>,
-): MuSigAggregatedNonce {
+): MuSig2AggregatedNonce {
   if (publicNonces.length === 0) {
     throw new Error('Cannot aggregate zero nonces')
   }
@@ -501,12 +504,12 @@ export function musigNonceAgg(
  * )
  * ```
  */
-export function musigPartialSign(
-  secretNonce: MuSigNonce,
+export function muSig2PartialSign(
+  secretNonce: MuSig2Nonce,
   privateKey: PrivateKey,
-  keyAggContext: MuSigKeyAggContext,
+  keyAggContext: MuSig2KeyAggContext,
   signerIndex: number,
-  aggregatedNonce: MuSigAggregatedNonce,
+  aggregatedNonce: MuSig2AggregatedNonce,
   message: Buffer,
   publicKeyForChallenge?: PublicKey,
 ): BN {
@@ -516,13 +519,15 @@ export function musigPartialSign(
 
   // Step 1: Compute nonce coefficient b = H("MuSig/noncecoef", Q || R1 || R2 || m)
   const Q = keyAggContext.aggregatedPubKey
-  const nonceCoefData = Buffer.concat([
+  const nonceCoefData = BufferUtil.concat([
     Q.toBuffer(), // 33 bytes compressed
     Point.pointToCompressed(R1), // 33 bytes compressed
     Point.pointToCompressed(R2), // 33 bytes compressed
     message, // 32 bytes
   ])
-  const b = new BN(musigTaggedHash(MUSIG_TAG_NONCE_COEFF, nonceCoefData), 'be')
+  const b = BN.fromBuffer(
+    muSig2TaggedHash(MUSIG2_TAG_NONCE_COEFF, nonceCoefData),
+  )
 
   // Step 2: Compute effective nonce k = k1 + b*k2 (mod n)
   let k = k1.add(b.mul(k2)).umod(n)
@@ -538,16 +543,19 @@ export function musigPartialSign(
 
   // Step 5: Compute challenge e = H(R.x || compressed(Q) || m) - LOTUS FORMAT!
   // Use override public key if provided (e.g., commitment for Taproot), otherwise use aggregated key
-  const R_x = R.getX().toArrayLike(Buffer, 'be', 32)
+  const R_x = R.x.toBuffer({ size: 32 })
   const keyForChallenge = publicKeyForChallenge || Q
   const Q_compressed = Point.pointToCompressed(keyForChallenge.point) // 33 bytes!
-  const challengeData = Buffer.concat([R_x, Q_compressed, message])
-  const e = new BN(Hash.sha256(challengeData), 'be').umod(n)
+  const challengeData = BufferUtil.concat([R_x, Q_compressed, message])
+  const e = BN.fromBuffer(Hash.sha256(challengeData)).umod(n)
 
-  // Step 6: Get key aggregation coefficient for this signer
-  const a = keyAggContext.keyAggCoeff.get(signerIndex)
+  // Step 6: Get key aggregation coefficient for this signer's public key
+  const signerPubKey = privateKey.publicKey.toString()
+  const a = keyAggContext.keyAggCoeff.get(signerPubKey)
   if (!a) {
-    throw new Error(`Invalid signer index: ${signerIndex}`)
+    throw new Error(
+      `Public key not found in key aggregation context: ${signerPubKey.slice(0, 20)}...`,
+    )
   }
 
   // Step 7: Compute partial signature: s_i = k + e*a*x (mod n)
@@ -592,13 +600,13 @@ export function musigPartialSign(
  * )
  * ```
  */
-export function musigPartialSigVerify(
+export function muSig2PartialSigVerify(
   partialSig: BN,
   publicNonce: [Point, Point],
   publicKey: PublicKey,
-  keyAggContext: MuSigKeyAggContext,
+  keyAggContext: MuSig2KeyAggContext,
   signerIndex: number,
-  aggregatedNonce: MuSigAggregatedNonce,
+  aggregatedNonce: MuSig2AggregatedNonce,
   message: Buffer,
   publicKeyForChallenge?: PublicKey,
 ): boolean {
@@ -610,15 +618,14 @@ export function musigPartialSigVerify(
     const Q = keyAggContext.aggregatedPubKey
 
     // Step 1: Compute nonce coefficient b = H("MuSig/noncecoef", Q || R1 || R2 || m)
-    const nonceCoefData = Buffer.concat([
+    const nonceCoefData = BufferUtil.concat([
       Q.toBuffer(),
       Point.pointToCompressed(R1),
       Point.pointToCompressed(R2),
       message,
     ])
-    const b = new BN(
-      musigTaggedHash(MUSIG_TAG_NONCE_COEFF, nonceCoefData),
-      'be',
+    const b = BN.fromBuffer(
+      muSig2TaggedHash(MUSIG2_TAG_NONCE_COEFF, nonceCoefData),
     )
 
     // Step 2: Compute effective public nonce for this signer: Ri = R1,i + b*R2,i
@@ -638,16 +645,19 @@ export function musigPartialSigVerify(
 
     // Step 5: Compute challenge e = H(R.x || compressed(Q) || m) - LOTUS FORMAT!
     // Use override public key if provided (e.g., commitment for Taproot), otherwise use aggregated key
-    const R_x = R.getX().toArrayLike(Buffer, 'be', 32)
+    const R_x = R.x.toBuffer({ size: 32 })
     const keyForChallenge = publicKeyForChallenge || Q
     const Q_compressed = Point.pointToCompressed(keyForChallenge.point)
-    const challengeData = Buffer.concat([R_x, Q_compressed, message])
-    const e = new BN(Hash.sha256(challengeData), 'be').umod(n)
+    const challengeData = BufferUtil.concat([R_x, Q_compressed, message])
+    const e = BN.fromBuffer(Hash.sha256(challengeData)).umod(n)
 
-    // Step 7: Get key aggregation coefficient for this signer
-    const a = keyAggContext.keyAggCoeff.get(signerIndex)
+    // Step 7: Get key aggregation coefficient for this signer's public key
+    const signerPubKeyStr = publicKey.toString()
+    const a = keyAggContext.keyAggCoeff.get(signerPubKeyStr)
     if (!a) {
-      throw new Error(`Invalid signer index: ${signerIndex}`)
+      throw new Error(
+        `Public key not found in key aggregation context: ${signerPubKeyStr.slice(0, 20)}...`,
+      )
     }
 
     // Step 6: Verify equation: s_i * G = R_i + e * a * P_i
@@ -660,7 +670,7 @@ export function musigPartialSigVerify(
     const eaP = publicKey.point.mul(e.mul(a).umod(n))
     // If R was negated during signing, we must negate R_i during verification
     // Point negation: multiply by -1 = (n-1)
-    const R_i_adjusted = negated ? R_i.mul(n.sub(new BN(1))) : R_i
+    const R_i_adjusted = negated ? R_i.mul(n.sub(BN.One)) : R_i
     const rhs = R_i_adjusted.add(eaP)
 
     // Check if points are equal
@@ -713,9 +723,9 @@ export function musigPartialSigVerify(
  * )
  * ```
  */
-export function musigSigAgg(
+export function muSig2SigAgg(
   partialSigs: BN[],
-  aggregatedNonce: MuSigAggregatedNonce,
+  aggregatedNonce: MuSig2AggregatedNonce,
   message: Buffer,
   aggregatedPubKey: PublicKey,
   sighashType?: number,
@@ -732,13 +742,15 @@ export function musigSigAgg(
   // Use override public key if provided (e.g., commitment for Taproot), otherwise use aggregated key
   // This must match the public key used during signing for consistency
   const keyForNonceCoef = publicKeyForNonceCoef || aggregatedPubKey
-  const nonceCoefData = Buffer.concat([
+  const nonceCoefData = BufferUtil.concat([
     keyForNonceCoef.toBuffer(),
     Point.pointToCompressed(R1),
     Point.pointToCompressed(R2),
     message,
   ])
-  const b = new BN(musigTaggedHash(MUSIG_TAG_NONCE_COEFF, nonceCoefData), 'be')
+  const b = BN.fromBuffer(
+    muSig2TaggedHash(MUSIG2_TAG_NONCE_COEFF, nonceCoefData),
+  )
 
   // Step 2: Compute effective nonce R = R1 + b*R2
   const R = R1.add(R2.mul(b))
@@ -748,7 +760,7 @@ export function musigSigAgg(
   // So we don't need to do anything here - the partial sigs already account for it
 
   // Step 4: Sum all partial signatures: s = Σ(s_i) mod n
-  let s = new BN(0)
+  let s = BN.Zero
   for (const partialSig of partialSigs) {
     s = s.add(partialSig).umod(n)
   }
@@ -761,7 +773,7 @@ export function musigSigAgg(
   // Step 5: Create Signature object with (R.x, s)
   // CRITICAL: Use Signature data object format with compressed and isSchnorr flags
   // This matches how Schnorr.sign() creates signatures
-  const r = R.getX()
+  const r = R.x
 
   const signature = new Signature({
     r: r,
@@ -776,35 +788,4 @@ export function musigSigAgg(
   // When serializing to transaction format, toTxFormat() will append the sighash byte
 
   return signature
-}
-
-// ============================================================================
-// Exports
-// ============================================================================
-
-/**
- * MuSig2 Module Exports
- *
- * Core functions:
- * - musigKeyAgg: Aggregate public keys
- * - musigNonceGen: Generate signing nonces
- * - musigNonceAgg: Aggregate nonces from all signers
- * - musigPartialSign: Create partial signature
- * - musigPartialSigVerify: Verify a partial signature
- * - musigSigAgg: Aggregate partial signatures into final signature
- *
- * Types:
- * - MuSigKeyAggContext: Key aggregation result
- * - MuSigNonce: Secret and public nonce pair
- * - MuSigAggregatedNonce: Aggregated nonces
- */
-
-export default {
-  musigKeyAgg,
-  musigNonceGen,
-  musigNonceAgg,
-  musigPartialSign,
-  musigPartialSigVerify,
-  musigSigAgg,
-  musigTaggedHash,
 }

@@ -4,6 +4,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
+import { Buffer } from 'buffer/'
 import { PrivateKey } from '../../lib/bitcore/privatekey.js'
 import {
   MuSigSessionManager,

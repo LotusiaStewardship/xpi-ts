@@ -4,56 +4,55 @@
  */
 
 // Crypto modules
-//export { BigIntUtil } from './crypto/bigint.js'
-export { Hash } from './crypto/hash.js'
-export { Random } from './crypto/random.js'
-export { Point } from './crypto/point.js'
-export { Signature } from './crypto/signature.js'
-export { ECDSA } from './crypto/ecdsa.js'
-export { Schnorr } from './crypto/schnorr.js'
-export { BN } from './crypto/bn.js'
+export { Hash } from './crypto/hash'
+export { Random } from './crypto/random'
+export { Point } from './crypto/point'
+export { Signature } from './crypto/signature'
+export { ECDSA } from './crypto/ecdsa'
+export { Schnorr } from './crypto/schnorr'
+export { BN } from './crypto/bn'
 
 // MuSig2 module
 export {
-  musigKeyAgg,
-  musigNonceGen,
-  musigNonceAgg,
-  musigPartialSign,
-  musigPartialSigVerify,
-  musigSigAgg,
-  musigTaggedHash,
-  type MuSigKeyAggContext,
-  type MuSigNonce,
-  type MuSigAggregatedNonce,
-} from './crypto/musig2.js'
+  muSig2KeyAgg,
+  muSig2NonceGen,
+  muSig2NonceAgg,
+  muSig2PartialSign,
+  muSig2PartialSigVerify,
+  muSig2SigAgg,
+  muSig2TaggedHash,
+  type MuSig2KeyAggContext,
+  type MuSig2Nonce,
+  type MuSig2AggregatedNonce,
+} from './crypto/musig2'
 
 // MuSig2 session management
 export {
   MuSigSessionManager,
   MuSigSessionPhase,
   type MuSigSession,
-} from './musig2/session.js'
+} from './musig2/session'
 
+// MuSig2 high-level wrapper (simplified API)
 export {
-  // MuSig2 high-level wrapper (simplified API)
   MuSig2Signer,
   createMuSig2Signer,
   type MuSig2SignerConfig,
   type MuSig2PrepareResult,
   type MuSig2SignResult,
   type MuSig2TaprootSignResult,
-} from './musig2/signer.js'
+} from './musig2/signer'
 
 // Taproot + MuSig2 integration
 export {
-  buildMuSigTaprootKey,
-  buildMuSigTaprootKeyWithScripts,
+  buildMuSig2TaprootKey,
+  buildMuSig2TaprootKeyWithScripts,
   signTaprootKeyPathWithMuSig2,
   verifyTaprootKeyPathMuSigPartial,
   isMuSigTaprootOutput,
   createMuSigTaprootAddress,
-  type MuSigTaprootKeyResult,
-} from './taproot/musig2.js'
+  type MuSig2TaprootKeyResult,
+} from './taproot/musig2'
 
 // Sigtype utility functions
 export {
@@ -61,31 +60,30 @@ export {
   isECDSASignature,
   getSignatureType,
   isValidSignatureLength,
-} from './crypto/sigtype.js'
+} from './crypto/sigtype'
 
 // Key modules
-export { PrivateKey } from './privatekey.js'
-export { PublicKey } from './publickey.js'
-export { HDPrivateKey } from './hdprivatekey.js'
-export { HDPublicKey } from './hdpublickey.js'
+export { PrivateKey } from './privatekey'
+export { PublicKey } from './publickey'
+export { HDPrivateKey } from './hdprivatekey'
+export { HDPublicKey } from './hdpublickey'
 
 // Utility modules
-export { JSUtil } from './util/js.js'
-export { Preconditions } from './util/preconditions.js'
-export { Base32 } from './util/base32.js'
-export { convertBits } from './util/convertBits.js'
-export { BufferUtil, NULL_HASH, EMPTY_BUFFER } from './util/buffer.js'
-export { util } from './util.js'
+export { JSUtil } from './util/js'
+export { Preconditions } from './util/preconditions'
+export { Base32 } from './util/base32'
+export { convertBits } from './util/convertBits'
+export { BufferUtil, NULL_HASH, EMPTY_BUFFER } from './util/buffer'
 
 // Error handling
-export { BitcoreError } from './errors.js'
+export { BitcoreError } from './errors'
 
 // Encoding modules
-export { Base58 } from './encoding/base58.js'
-export { Base58Check } from './encoding/base58check.js'
-export { BufferReader } from './encoding/bufferreader.js'
-export { BufferWriter, BufferWriterFactory } from './encoding/bufferwriter.js'
-export { Varint } from './encoding/varint.js'
+export { Base58 } from './encoding/base58'
+export { Base58Check } from './encoding/base58check'
+export { BufferReader } from './encoding/bufferreader'
+export { BufferWriter } from './encoding/bufferwriter'
+export { Varint } from './encoding/varint'
 
 // Network modules
 export {
@@ -100,27 +98,26 @@ export {
   remove as removeNetwork,
   Networks,
   type NetworkName,
-} from './networks.js'
+} from './networks'
 
 // Address modules
-export { Address } from './address.js'
-export { XAddress } from './xaddress.js'
+export { Address } from './address'
+export { XAddress } from './xaddress'
 
 // Script modules
-export { Script } from './script.js'
-export { Opcode } from './opcode.js'
-export { Interpreter } from './script/interpreter.js'
-export { Chunk } from './chunk.js'
-export { type ScriptType, ScriptTypes, toAddress, empty } from './script.js'
+export { Script, ScriptTypes, type ScriptType } from './script'
+export { Opcode } from './opcode'
+export { Interpreter } from './script/interpreter'
+export { Chunk } from './script/chunk'
 
 // Unit module
-export { Unit } from './unit.js'
+export { Unit } from './unit'
 
 // Message module
-export { Message } from './message.js'
+export { Message } from './message'
 
 // URI module
-export { URI } from './uri.js'
+export { URI } from './uri'
 
 // Transaction components
 export {
@@ -137,14 +134,14 @@ export {
   verify,
   TransactionSignature,
   Transaction,
-} from './transaction/index.js'
+} from './transaction'
 
 // Sighash constants
 export {
   DEFAULT_SIGN_FLAGS,
   SIGHASH_SINGLE_BUG,
   BITS_64_ON,
-} from './transaction/sighash.js'
+} from './transaction/sighash'
 
 // Taproot modules
 export {
@@ -189,28 +186,10 @@ export {
   type TapLeaf,
   type TapTreeBuildResult,
   type TaprootVerifyResult,
-} from './script/taproot.js'
-
-// NFT modules
-export { NFT, NFTUtil } from './taproot/nft.js'
-
-export type {
-  NFTMetadata,
-  NFTAttribute,
-  NFTCollectionMetadata,
-  NFTData,
-  NFTTransfer,
-  NFTMintConfig,
-  NFTTransferConfig,
-  NFTUtxo,
-  NFTWithScriptPath,
-  NFTWithCollection,
-  NFTInfo,
-  NFTObject,
-} from './taproot/nft.js'
+} from './script/taproot'
 
 // Block components
-export { Block, BlockHeader } from './block/index.js'
+export { Block, BlockHeader, MerkleBlock } from './block'
 
 // Mnemonic components
 export {
@@ -219,7 +198,7 @@ export {
   MnemonicError,
   pbkdf2,
   Words,
-} from './mnemonic/index.js'
+} from './mnemonic'
 
 // TypeScript type exports
 export type {
@@ -233,57 +212,55 @@ export type {
   TransactionSignatureObject,
   TransactionData,
   TransactionObject,
-} from './transaction/index.js'
+} from './transaction'
 
 export type {
   BlockData,
   BlockObject,
   BlockHeaderData,
   BlockHeaderObject,
-} from './block/index.js'
+  MerkleBlockData,
+  MerkleBlockObject,
+} from './block'
 
 // Additional interface exports for commonly used types
-export type { NetworkConfig } from './networks.js'
+export type { NetworkConfig } from './networks'
 
 export type {
   PrivateKeyData,
   PrivateKeyObject,
   PrivateKeySerialized,
-} from './privatekey.js'
+} from './privatekey'
 
 export type {
   PublicKeyData,
   PublicKeyExtra,
   PublicKeyObject,
   PublicKeySerialized,
-} from './publickey.js'
+} from './publickey'
 
 export type {
   HDPrivateKeyData,
   HDPrivateKeyObject,
   HDPrivateKeyBuffers,
   HDPrivateKeyInput,
-} from './hdprivatekey.js'
+} from './hdprivatekey'
 
 export type {
   HDPublicKeyData,
   HDPublicKeyObject,
   HDPublicKeyBuffers,
   HDPublicKeyInput,
-} from './hdpublickey.js'
+} from './hdpublickey'
 
-export type {
-  AddressData,
-  AddressObject,
-  CashAddressDecoding,
-} from './address.js'
+export type { AddressData, AddressObject, CashAddressDecoding } from './address'
 
-export type { XAddressData, XAddressObject } from './xaddress.js'
+export type { XAddressData, XAddressObject } from './xaddress'
 
-export type { ScriptData } from './script.js'
+export type { ScriptData } from './script'
 
-export type { URIParams } from './uri.js'
+export type { URIParams } from './uri'
 
-export type { UnitData } from './unit.js'
+export type { UnitData } from './unit'
 
-export type { TransactionLike } from './transaction/sighash.js'
+export type { TransactionLike } from './transaction/sighash'

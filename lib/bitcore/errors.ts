@@ -359,6 +359,9 @@ export class BitcoreError extends Error {
 
   // Type declarations for dynamically added error types
   static NotImplemented: new (message?: string) => BitcoreError
+  static MerkleBlock: {
+    InvalidMerkleTree: new () => BitcoreError
+  }
   static Script: {
     InvalidBuffer: new (buffer: string) => BitcoreError
     UnrecognizedAddress: new (address: unknown) => BitcoreError

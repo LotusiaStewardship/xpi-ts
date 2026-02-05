@@ -15,23 +15,24 @@
  *
  * @module MuSig2Session
  */
-
-import { PublicKey } from '../publickey.js'
-import { PrivateKey } from '../privatekey.js'
-import { Point, BN, Signature, Random, Hash } from '../crypto/index.js'
+import { PublicKey } from '../publickey'
+import { PrivateKey } from '../privatekey'
+import { Point, BN, Signature, Random, Hash } from '../crypto/index'
 import {
-  musigKeyAgg,
-  musigNonceGen,
-  musigNonceAgg,
-  musigPartialSign,
-  musigPartialSigVerify,
-  musigSigAgg,
-  type MuSigKeyAggContext,
-  type MuSigNonce,
-  type MuSigAggregatedNonce,
-} from '../crypto/musig2.js'
-import { verifyTaprootKeyPathMuSigPartial } from '../taproot/musig2.js'
+  muSig2KeyAgg,
+  muSig2NonceGen,
+  muSig2NonceAgg,
+  muSig2PartialSign,
+  muSig2PartialSigVerify,
+  muSig2SigAgg,
+  type MuSig2KeyAggContext,
+  type MuSig2Nonce,
+  type MuSig2AggregatedNonce,
+} from '../crypto/musig2'
+import { verifyTaprootKeyPathMuSigPartial } from '../taproot/musig2'
 import { calculateTapTweak, tweakPublicKey } from '../script/taproot'
+import { BufferUtil } from '../util/buffer'
+import type { Buffer } from 'buffer/'
 
 /**
  * Session phases in the MuSig2 protocol
@@ -90,7 +91,7 @@ export interface MuSigSession {
   myIndex: number
 
   /** Key aggregation context (computed once) */
-  keyAggContext: MuSigKeyAggContext
+  keyAggContext: MuSig2KeyAggContext
 
   /** Message to be signed */
   message: Buffer
@@ -100,7 +101,7 @@ export interface MuSigSession {
 
   // Round 1 state
   /** This signer's secret nonce (NEVER share!) */
-  mySecretNonce?: MuSigNonce
+  mySecretNonce?: MuSig2Nonce
 
   /** This signer's public nonce */
   myPublicNonce?: [Point, Point]
@@ -110,7 +111,7 @@ export interface MuSigSession {
 
   // Round 2 state
   /** Aggregated nonce (computed when all public nonces received) */
-  aggregatedNonce?: MuSigAggregatedNonce
+  aggregatedNonce?: MuSig2AggregatedNonce
 
   /** This signer's partial signature */
   myPartialSig?: BN
@@ -185,10 +186,10 @@ export class MuSigSessionManager {
     }
 
     // Perform key aggregation (sorts keys internally for deterministic ordering)
-    const keyAggContext = musigKeyAgg(signers)
+    const keyAggContext = muSig2KeyAgg(signers)
 
     // Find this signer's index in the SORTED key list
-    // (musigKeyAgg returns sorted keys in keyAggContext.pubkeys)
+    // (muSig2KeyAgg returns sorted keys in keyAggContext.pubkeys)
     const myPubKey = myPrivateKey.publicKey
     const myIndex = keyAggContext.pubkeys.findIndex(
       signer => signer.toString() === myPubKey.toString(),
@@ -234,7 +235,7 @@ export class MuSigSessionManager {
    * provides additional protection against implementation bugs or hardware failures.
    *
    * If you need deterministic nonces (e.g., for testing with known vectors),
-   * pass Buffer.alloc(32) as extraInput to disable the random layer.
+   * pass BufferUtil.alloc(32) as extraInput to disable the random layer.
    *
    * WARNING: Do not call this multiple times for the same session!
    * Nonce reuse reveals the private key!
@@ -253,7 +254,7 @@ export class MuSigSessionManager {
    *
    * @example Testing with deterministic nonces
    * ```typescript
-   * const nonces = manager.generateNonces(session, privateKey, Buffer.alloc(32))
+   * const nonces = manager.generateNonces(session, privateKey, BufferUtil.alloc(32))
    * // Uses only RFC6979 deterministic generation (reproducible)
    * ```
    */
@@ -278,12 +279,12 @@ export class MuSigSessionManager {
 
     // SECURITY: Add random entropy by default for production use
     // This provides defense-in-depth on top of RFC6979 deterministic generation
-    // Pass Buffer.alloc(32) as extraInput to disable for testing
+    // Pass BufferUtil.alloc(32) as extraInput to disable for testing
     const entropy =
       extraInput !== undefined ? extraInput : Random.getRandomBuffer(32)
 
     // Generate nonces with RFC6979 + optional randomness
-    const nonce = musigNonceGen(
+    const nonce = muSig2NonceGen(
       privateKey,
       session.keyAggContext.aggregatedPubKey,
       session.message,
@@ -402,7 +403,7 @@ export class MuSigSessionManager {
     }
 
     // Create partial signature
-    const partialSig = musigPartialSign(
+    const partialSig = muSig2PartialSign(
       session.mySecretNonce,
       privateKey,
       session.keyAggContext,
@@ -473,7 +474,7 @@ export class MuSigSessionManager {
     if (session.metadata?.inputScriptType === 'taproot') {
       // Taproot key-path spending requires special verification
       // Compute Taproot tweak (merkle root is all zeros for key-path only)
-      const merkleRoot = Buffer.alloc(32)
+      const merkleRoot = BufferUtil.alloc(32)
       const tweak = calculateTapTweak(
         session.keyAggContext.aggregatedPubKey,
         merkleRoot,
@@ -491,7 +492,7 @@ export class MuSigSessionManager {
       )
     } else {
       // Regular MuSig2 verification (non-Taproot)
-      isValid = musigPartialSigVerify(
+      isValid = muSig2PartialSigVerify(
         partialSig,
         publicNonce,
         session.signers[signerIndex],
@@ -620,12 +621,12 @@ export class MuSigSessionManager {
     entropy: Buffer = Random.getRandomBuffer(16),
   ): string {
     const signersHash = Hash.sha256(
-      Buffer.concat(signers.map(s => s.toBuffer())),
+      BufferUtil.concat(signers.map(s => s.toBuffer())),
     )
     const messageHash = Hash.sha256(message)
-    const timestampBuffer = Buffer.alloc(8)
-    timestampBuffer.writeBigInt64BE(BigInt(createdAt))
-    const combined = Buffer.concat([
+    const timestampBuffer = BufferUtil.alloc(8)
+    timestampBuffer.writeBigInt64BE(createdAt, 0)
+    const combined = BufferUtil.concat([
       signersHash,
       messageHash,
       timestampBuffer,
@@ -693,7 +694,7 @@ export class MuSigSessionManager {
     }
 
     // Aggregate
-    session.aggregatedNonce = musigNonceAgg(allNonces)
+    session.aggregatedNonce = muSig2NonceAgg(allNonces)
     session.updatedAt = Date.now()
   }
 
@@ -731,7 +732,7 @@ export class MuSigSessionManager {
     let pubKeyForNonceCoef = session.keyAggContext.aggregatedPubKey
     if (session.metadata?.inputScriptType === 'taproot') {
       // Compute Taproot commitment (merkle root is all zeros for key-path only)
-      const merkleRoot = Buffer.alloc(32)
+      const merkleRoot = BufferUtil.alloc(32)
       const commitment = tweakPublicKey(
         session.keyAggContext.aggregatedPubKey,
         merkleRoot,
@@ -748,7 +749,7 @@ export class MuSigSessionManager {
         ? Signature.SIGHASH_ALL | Signature.SIGHASH_LOTUS
         : undefined
 
-    session.finalSignature = musigSigAgg(
+    session.finalSignature = muSig2SigAgg(
       allPartialSigs,
       session.aggregatedNonce,
       session.message,

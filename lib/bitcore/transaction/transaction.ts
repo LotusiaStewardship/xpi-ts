@@ -12,16 +12,16 @@
  * Reference: lotusd/src/script/interpreter.cpp lines 1900-1908
  */
 
-import { Preconditions } from '../util/preconditions.js'
-import { JSUtil } from '../util/js.js'
-import { BufferReader } from '../encoding/bufferreader.js'
-import { BufferWriter } from '../encoding/bufferwriter.js'
-import { Hash } from '../crypto/hash.js'
-import { Signature, SignatureSigningMethod } from '../crypto/signature.js'
-import { verify, TransactionLike } from './sighash.js'
-import { BitcoreError } from '../errors.js'
-import { Address } from '../address.js'
-import { UnspentOutput, UnspentOutputData } from './unspentoutput.js'
+import { Preconditions } from '../util/preconditions'
+import { JSUtil } from '../util/js'
+import { BufferReader } from '../encoding/bufferreader'
+import { BufferWriter } from '../encoding/bufferwriter'
+import { Hash } from '../crypto/hash'
+import { Signature, SignatureSigningMethod } from '../crypto/signature'
+import { verify, TransactionLike } from './sighash'
+import { BitcoreError } from '../errors'
+import { Address } from '../address'
+import { UnspentOutput, UnspentOutputData } from './unspentoutput'
 import {
   Input,
   InputObject,
@@ -30,17 +30,19 @@ import {
   PublicKeyInput,
   PublicKeyHashInput,
   TaprootInput,
-  MuSigTaprootInput,
-} from './input.js'
-import { Output, OutputObject } from './output.js'
-import { Script } from '../script.js'
-import { PrivateKey } from '../privatekey.js'
-import { PublicKey } from '../publickey.js'
-import { BN } from '../crypto/bn.js'
-import { TransactionSignature } from './signature.js'
-import type { Point } from '../crypto/point.js'
-import { sighash as computeSighash } from './sighash.js'
-import { Interpreter } from '../script/interpreter.js'
+  MuSig2TaprootInput,
+} from './input'
+import { Output, OutputObject } from './output'
+import { Script } from '../script'
+import { PrivateKey } from '../privatekey'
+import { PublicKey } from '../publickey'
+import { BN } from '../crypto/bn'
+import { TransactionSignature } from './signature'
+import type { Point } from '../crypto/point'
+import { sighash as computeSighash } from './sighash'
+import { Interpreter } from '../script/interpreter'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 export interface TransactionData {
   version?: number
@@ -94,7 +96,7 @@ const FEE_PER_KB = 1_000
 const CHANGE_OUTPUT_MAX_SIZE = 20 + 4 + 34 + 4
 const MAXIMUM_EXTRA_SIZE = 4 + 9 + 9 + 4
 
-const NULL_HASH = Buffer.from(
+const NULL_HASH = BufferUtil.from(
   '0000000000000000000000000000000000000000000000000000000000000000',
   'hex',
 )
@@ -154,7 +156,7 @@ export class Transaction {
       return Transaction.shallowCopy(serialized)
     } else if (typeof serialized === 'string' && JSUtil.isHexa(serialized)) {
       this.fromString(serialized)
-    } else if (Buffer.isBuffer(serialized)) {
+    } else if (BufferUtil.isBuffer(serialized)) {
       this.fromBuffer(serialized)
     } else if (serialized && typeof serialized === 'object') {
       this.fromObject(serialized)
@@ -219,6 +221,10 @@ export class Transaction {
     return this._hash
   }
 
+  get hashBuffer(): Buffer {
+    return this._getHash()
+  }
+
   /**
    * Get the transaction ID (little endian)
    */
@@ -236,6 +242,10 @@ export class Transaction {
       this._txid = reader.readReverse(32).toString('hex')
     }
     return this._txid
+  }
+
+  get txidBuffer(): Buffer {
+    return this._getTxid()
   }
 
   /**
@@ -388,7 +398,7 @@ export class Transaction {
         size += 1
       }
       for (let i = 0; i < size; i += 2) {
-        const buf = Buffer.concat([hashes[j + i], hashes[j + i + 1]])
+        const buf = BufferUtil.concat([hashes[j + i], hashes[j + i + 1]])
         hashes.push(Hash.sha256sha256(buf))
       }
       j += size
@@ -637,7 +647,7 @@ export class Transaction {
    * Deserialize from hex string
    */
   fromString(str: string): Transaction {
-    return this.fromBuffer(Buffer.from(str, 'hex'))
+    return this.fromBuffer(BufferUtil.from(str, 'hex'))
   }
 
   /**
@@ -969,10 +979,10 @@ export class Transaction {
    * }
    * ```
    */
-  getMuSig2Inputs(): MuSigTaprootInput[] {
+  getMuSig2Inputs(): MuSig2TaprootInput[] {
     return this.inputs.filter(
-      input => input instanceof MuSigTaprootInput,
-    ) as MuSigTaprootInput[]
+      input => input instanceof MuSig2TaprootInput,
+    ) as MuSig2TaprootInput[]
   }
 
   /**
@@ -993,8 +1003,8 @@ export class Transaction {
    */
   getMuSig2Sighash(inputIndex: number): Buffer {
     const input = this.inputs[inputIndex]
-    if (!(input instanceof MuSigTaprootInput)) {
-      throw new Error(`Input ${inputIndex} is not a MuSigTaprootInput`)
+    if (!(input instanceof MuSig2TaprootInput)) {
+      throw new Error(`Input ${inputIndex} is not a MuSig2TaprootInput`)
     }
 
     if (!input.output) {
@@ -1036,8 +1046,8 @@ export class Transaction {
     nonce: [Point, Point],
   ): Transaction {
     const input = this.inputs[inputIndex]
-    if (!(input instanceof MuSigTaprootInput)) {
-      throw new Error(`Input ${inputIndex} is not a MuSigTaprootInput`)
+    if (!(input instanceof MuSig2TaprootInput)) {
+      throw new Error(`Input ${inputIndex} is not a MuSig2TaprootInput`)
     }
 
     input.addPublicNonce(signerIndex, nonce)
@@ -1069,8 +1079,8 @@ export class Transaction {
     partialSig: BN,
   ): Transaction {
     const input = this.inputs[inputIndex]
-    if (!(input instanceof MuSigTaprootInput)) {
-      throw new Error(`Input ${inputIndex} is not a MuSigTaprootInput`)
+    if (!(input instanceof MuSig2TaprootInput)) {
+      throw new Error(`Input ${inputIndex} is not a MuSig2TaprootInput`)
     }
 
     input.addPartialSignature(signerIndex, partialSig)
@@ -1099,7 +1109,7 @@ export class Transaction {
 
     for (let i = 0; i < this.inputs.length; i++) {
       const input = this.inputs[i]
-      if (input instanceof MuSigTaprootInput) {
+      if (input instanceof MuSig2TaprootInput) {
         if (!input.hasAllPartialSignatures()) {
           throw new Error(
             `MuSig2 input ${i} is missing partial signatures. ` +
@@ -1108,7 +1118,7 @@ export class Transaction {
         }
 
         const sighash = this.getMuSig2Sighash(i)
-        input.finalizeMuSigSignature(this, sighash)
+        input.finalizeMuSig2Signature(this, sighash)
       }
     }
 
@@ -1322,6 +1332,11 @@ export class Transaction {
     this._updateChangeOutput()
   }
 
+  // ===================================================
+  // BIP69 methods
+  // https://github.com/bitcoin/bips/blob/master/bip-0069.mediawiki
+  // ===================================================
+
   /**
    * Sort transaction
    */
@@ -1333,7 +1348,10 @@ export class Transaction {
         ;(x as Input & { i?: number }).i = i++
       })
       copy.sort((first, second) => {
-        const prevTxIdCompare = Buffer.compare(first.prevTxId, second.prevTxId)
+        const prevTxIdCompare = BufferUtil.compare(
+          first.prevTxId,
+          second.prevTxId,
+        )
         if (prevTxIdCompare !== 0) return prevTxIdCompare
         const outputIndexCompare = first.outputIndex - second.outputIndex
         if (outputIndexCompare !== 0) return outputIndexCompare
@@ -1353,7 +1371,7 @@ export class Transaction {
       copy.sort((first, second) => {
         const satoshisCompare = first.satoshis - second.satoshis
         if (satoshisCompare !== 0) return satoshisCompare
-        const scriptCompare = Buffer.compare(
+        const scriptCompare = BufferUtil.compare(
           first.scriptBuffer,
           second.scriptBuffer,
         )
@@ -1581,13 +1599,10 @@ export class Transaction {
         const verifyFlags =
           flags !== undefined
             ? flags
-            : Interpreter.SCRIPT_VERIFY_P2SH |
-              Interpreter.SCRIPT_VERIFY_STRICTENC |
-              Interpreter.SCRIPT_VERIFY_DERSIG |
-              Interpreter.SCRIPT_VERIFY_LOW_S |
-              Interpreter.SCRIPT_VERIFY_NULLFAIL |
-              Interpreter.SCRIPT_ENABLE_SIGHASH_FORKID |
-              Interpreter.SCRIPT_ENABLE_SCHNORR_MULTISIG
+            : Interpreter.SCRIPT_ENABLE_SIGHASH_FORKID |
+              Interpreter.SCRIPT_VERIFY_CLEANSTACK |
+              Interpreter.SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS |
+              Interpreter.SCRIPT_VERIFY_INPUT_SIGCHECKS
 
         // Verify once and capture both result and error
         const interpreter = new Interpreter()
@@ -1675,9 +1690,16 @@ export class Transaction {
         unspentOutput.keyAggContext &&
         unspentOutput.mySignerIndex !== undefined
       ) {
-        clazz = MuSigTaprootInput
-        // Create MuSigTaprootInput with key aggregation context
-        const input = new MuSigTaprootInput({
+        // validate that we have the internalPubKey and merkleRoot
+        // these are required for MuSig2 Taproot inputs
+        if (!unspentOutput.internalPubKey || !unspentOutput.merkleRoot) {
+          throw new BitcoreError(
+            'MuSig2 Taproot input requires internalPubKey and merkleRoot',
+          )
+        }
+        clazz = MuSig2TaprootInput
+        // Create MuSig2TaprootInput with key aggregation context
+        const input = new MuSig2TaprootInput({
           output: new Output({
             script: unspentOutput.script,
             satoshis: unspentOutput.satoshis,
@@ -1687,9 +1709,16 @@ export class Transaction {
           script: new Script(),
           keyAggContext: unspentOutput.keyAggContext,
           mySignerIndex: unspentOutput.mySignerIndex,
+          internalPubKey: unspentOutput.internalPubKey,
+          merkleRoot: unspentOutput.merkleRoot,
         })
         this.addInput(input)
         return
+      }
+      // validate that we have the internalPubKey (required for Taproot inputs)
+      // if there is no merkleroot provided, assume key-path spend and use zero buffer
+      if (!unspentOutput.internalPubKey) {
+        throw new BitcoreError('Taproot input requires internalPubKey')
       }
       clazz = TaprootInput
       // Create TaprootInput with internal key and merkle root if provided
@@ -1703,7 +1732,7 @@ export class Transaction {
         outputIndex: unspentOutput.outputIndex,
         script: new Script(),
         internalPubKey: unspentOutput.internalPubKey,
-        merkleRoot: unspentOutput.merkleRoot || Buffer.alloc(32),
+        merkleRoot: unspentOutput.merkleRoot || BufferUtil.alloc(32),
       })
       this.addInput(taprootInput)
       return

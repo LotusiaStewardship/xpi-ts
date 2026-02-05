@@ -38,28 +38,26 @@ export interface UnitData {
 export type UnitCode = keyof typeof UNITS
 
 /**
- * Utility for handling and converting Lotus XPI units. The supported units are
- * XPI, mXPI, bits (also named uXPI) and satoshis. A unit instance can be created with an
- * amount and a unit code, or alternatively using static methods like {fromXPI}.
- * It also allows to be created from a fiat amount and the exchange rate, or
- * alternatively using the {fromFiat} static method.
- * You can consult for different representation of a unit instance using it's
- * {to} method, the fixed unit methods like {toSatoshis} or alternatively using
- * the unit accessors. It also can be converted to a fiat amount by providing the
- * corresponding XPI/fiat exchange rate.
+ * Utility for handling and converting Lotus XPI units.
+ *
+ * Supported units are XPI, mXPI, bits (also named uXPI) and satoshis.
+ * A unit instance can be created with an amount and a unit code, or
+ * alternatively using static methods like {@link Unit.fromXPI}.
+ * It also allows creation from a fiat amount and exchange rate, or
+ * alternatively using the {@link Unit.fromFiat} static method.
+ *
+ * You can query for different representations of a unit instance using its
+ * {@link Unit.to} method, the fixed unit methods like {@link Unit.toSatoshis},
+ * or alternatively using the unit accessors. It can also be converted to a
+ * fiat amount by providing the corresponding XPI/fiat exchange rate.
  *
  * @example
- * ```javascript
- * var sats = Unit.fromXPI(1.3).toSatoshis();
- * var mili = Unit.fromBits(1.3).to(Unit.mXPI);
- * var bits = Unit.fromFiat(1.3, 350).bits;
- * var xpi = new Unit(1.3, Unit.bits).XPI;
+ * ```typescript
+ * const sats = Unit.fromXPI(1.3).toSatoshis()
+ * const mili = Unit.fromMicros(1.3).to(Unit.mXPI)
+ * const bits = Unit.fromFiat(1.3, 350).bits
+ * const xpi = new Unit(1.3, Unit.bits).XPI
  * ```
- *
- * @param {Number} amount - The amount to be represented
- * @param {String|Number} code - The unit of the amount or the exchange rate
- * @returns {Unit} A new instance of an Unit
- * @constructor
  */
 export class Unit {
   private _value!: bigint
