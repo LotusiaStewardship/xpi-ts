@@ -2,7 +2,17 @@
  * Network definitions for Lotus
  * Migrated from bitcore-lib-xpi with ESM support
  */
+import { BufferUtil } from './util/buffer'
+import type { Buffer } from 'buffer/'
 
+/**
+ * Converts a string prefix to an array of 5-bit values.
+ * Each character is converted to its ASCII code and masked with 31 (0x1F)
+ * to extract the lower 5 bits.
+ *
+ * @param prefix - The string prefix to convert
+ * @returns An array of numbers representing the 5-bit values of each character
+ */
 function prefixToArray(prefix: string): number[] {
   const result: number[] = []
   for (let i = 0; i < prefix.length; i++) {
@@ -92,7 +102,7 @@ export const livenet = new Network({
   scripthash: 5,
   xpubkey: 0x0488b21e,
   xprivkey: 0x0488ade4,
-  networkMagic: Buffer.from('ece7eff3', 'hex'),
+  networkMagic: BufferUtil.from('ece7eff3', 'hex'),
   port: 10605,
   dnsSeeds: ['seed.lotusia.org'],
   prefixArray: prefixToArray('bitcoincash'),
@@ -108,7 +118,7 @@ export const testnet = new Network({
   scripthash: 0xc4,
   xpubkey: 0x043587cf,
   xprivkey: 0x04358394,
-  networkMagic: Buffer.from('ecf4f3f4', 'hex'),
+  networkMagic: BufferUtil.from('ecf4f3f4', 'hex'),
   port: 11605,
   dnsSeeds: ['seed.lotusia.org'],
   prefixArray: prefixToArray('bchtest'),
@@ -124,7 +134,7 @@ export const regtest = new Network({
   scripthash: 0xc4,
   xpubkey: 0x043587cf,
   xprivkey: 0x04358394,
-  networkMagic: Buffer.from('ecf2e5e7', 'hex'),
+  networkMagic: BufferUtil.from('ecf2e5e7', 'hex'),
   port: 12605,
   dnsSeeds: [],
   prefixArray: prefixToArray('bchreg'),

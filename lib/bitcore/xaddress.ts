@@ -2,7 +2,7 @@
  * XAddress implementation
  * Migrated from bitcore-lib-xpi with ESM support and TypeScript
  */
-
+import { Buffer } from 'buffer/'
 import { Preconditions } from './util/preconditions.js'
 import { BitcoreError } from './errors.js'
 import { Base58 } from './encoding/base58.js'
@@ -14,19 +14,6 @@ import { Hash } from './crypto/hash.js'
 import { JSUtil } from './util/js.js'
 import { BufferUtil } from './util/buffer.js'
 import { PublicKey } from './publickey.js'
-
-/**
- * The default token or network prefix name for Lotus addresses.
- * Typically used as the starting character or set prefix in address strings.
- */
-const TOKEN_NAME = 'lotus'
-
-/**
- * The Base58 alphabet used for encoding Lotus XAddresses.
- * Excludes easily confused characters: 0 (zero), O (capital o), I (capital i), and l (lower case L).
- * This alphabet is compatible with Bitcoin's traditional Base58 encoding.
- */
-const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
 /**
  * Represents the data to create, validate, or serialize an XAddress.
@@ -111,7 +98,7 @@ export class XAddress {
     data?: XAddressInput,
     network?: Network | NetworkName,
     type?: string,
-    prefix: string = TOKEN_NAME,
+    prefix: string = 'lotus',
   ) {
     if (data instanceof XAddress) {
       // Immutable instance
@@ -287,7 +274,7 @@ export class XAddress {
     buffer: Buffer | Uint8Array,
     network?: Network | NetworkName,
     type?: string,
-    prefix: string = TOKEN_NAME,
+    prefix: string = 'lotus',
   ): XAddressData {
     const info: XAddressData = {}
     if (!Buffer.isBuffer(buffer) && !(buffer instanceof Uint8Array)) {
@@ -461,7 +448,7 @@ function createChecksum(
     typeByte,
     payload,
   ])
-  return Hash.sha256(data).subarray(0, 4)
+  return Hash.sha256(data).slice(0, 4)
 }
 
 function createChecksumLegacy(
@@ -478,7 +465,7 @@ function createChecksumLegacy(
   bw.writeVarintNum(payload.length)
   bw.write(payload)
   const buf = bw.concat()
-  return Hash.sha256(buf).subarray(0, 4)
+  return Hash.sha256(buf).slice(0, 4)
 }
 
 function getType(typeByte: number): string | null {
@@ -574,9 +561,9 @@ function decode(address: string): XAddressData {
   const networkChar = address.substring(splitLocation, splitLocation + 1)
   const encodedPayload = address.substring(splitLocation + 1)
   const decodedBytes = Base58.decode(encodedPayload)
-  const typeByte = decodedBytes.subarray(0, 1)
-  const payload = decodedBytes.subarray(1, decodedBytes.length - 4)
-  const decodedChecksum = decodedBytes.subarray(decodedBytes.length - 4)
+  const typeByte = decodedBytes.slice(0, 1)
+  const payload = decodedBytes.slice(1, decodedBytes.length - 4)
+  const decodedChecksum = decodedBytes.slice(decodedBytes.length - 4)
 
   const checksum = createChecksum(prefix, networkChar, typeByte, payload)
 

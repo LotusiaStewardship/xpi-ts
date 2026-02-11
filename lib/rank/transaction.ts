@@ -3,6 +3,7 @@
  * Github: https://github.com/LotusiaStewardship
  * License: MIT
  */
+import { Buffer } from 'buffer/'
 import { MAX_OP_RETURN_OUTPUTS } from '../../utils/constants.js'
 import { Transaction } from '../bitcore/transaction/index.js'
 import { type TransactionRNKC, ScriptProcessor } from '../rank/index.js'

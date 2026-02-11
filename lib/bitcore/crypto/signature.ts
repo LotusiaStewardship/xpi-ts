@@ -20,7 +20,11 @@
  *
  * Migrated from bitcore-lib-xpi with ESM support and BigInt
  */
-import { BN } from './bn.js'
+
+import { BN } from './bn'
+import { BufferUtil } from '../util'
+import { isSchnorrSignature } from './sigtype'
+import type { Buffer } from 'buffer/'
 
 /**
  * Data structure for initializing a Signature object
@@ -208,6 +212,33 @@ export class Signature {
   static readonly SIGHASH_ANYONECANPAY = 0x80
 
   /**
+   * SIGHASH_RESERVED (0x20): Invalid reserved sighash algorithm
+   *
+   * This value is explicitly reserved and must not be used.
+   * Any signature using this algorithm value will be rejected.
+   *
+   * Reference: lotusd/src/script/sighashtype.h
+   *
+   * @constant
+   */
+  static readonly SIGHASH_RESERVED = 0x20
+
+  /**
+   * SIGHASH_ALGORITHM_MASK (0x60): Bits which specify the sighash algorithm
+   *
+   * Masks bits 5-6 to extract the algorithm type:
+   * - 0x00 = LEGACY (original Bitcoin sighash)
+   * - 0x20 = RESERVED (invalid)
+   * - 0x40 = FORKID (BIP143)
+   * - 0x60 = LOTUS (Lotus sighash with merkle trees)
+   *
+   * Reference: lotusd/src/script/sighashtype.h
+   *
+   * @constant
+   */
+  static readonly SIGHASH_ALGORITHM_MASK = 0x60
+
+  /**
    * Create a new Signature instance
    *
    * @param r - Either a BN representing the r value, or a SignatureData object with all properties
@@ -296,21 +327,21 @@ export class Signature {
    * @throws Error if buffer format is invalid
    */
   static fromCompact(buf: Buffer): Signature {
-    if (!Buffer.isBuffer(buf)) {
+    if (!BufferUtil.isBuffer(buf)) {
       throw new Error('Argument is expected to be a Buffer')
     }
 
     const sig = new Signature(new BN(0), new BN(0))
 
     let compressed = true
-    let i = buf.subarray(0, 1)[0] - 27 - 4
+    let i = buf.slice(0, 1)[0] - 27 - 4
     if (i < 0) {
       compressed = false
       i = i + 4
     }
 
-    const b2 = buf.subarray(1, 33)
-    const b3 = buf.subarray(33, 65)
+    const b2 = buf.slice(1, 33)
+    const b3 = buf.slice(33, 65)
 
     if (!(i === 0 || i === 1 || i === 2 || i === 3)) {
       throw new Error('i must be 0, 1, 2, or 3')
@@ -352,8 +383,12 @@ export class Signature {
    * @throws Error if format is invalid
    */
   static fromDER(buf: Buffer, strict: boolean = true): Signature {
-    // Schnorr Signatures use 64-65 byte format
-    if ((buf.length === 64 || buf.length === 65) && buf[0] !== 0x30) {
+    // Schnorr signatures: 64 bytes raw, or 65 bytes with sighash byte appended
+    // A 64-byte buffer starting with 0x30 is ambiguous but treated as invalid
+    // per lotusd/src/script/sigencoding.cpp CheckRawSignatureEncoding
+    const rawSig = buf.length === 65 && buf[0] !== 0x30 ? buf.slice(0, 64) : buf
+
+    if (isSchnorrSignature(rawSig) && buf[0] !== 0x30) {
       const obj = Signature.parseSchnorrEncodedSig(buf)
       const sig = new Signature(new BN(0), new BN(0))
       sig.r = obj.r
@@ -362,7 +397,7 @@ export class Signature {
       return sig
     }
 
-    if (buf.length === 64 && buf[0] === 0x30) {
+    if (isSchnorrSignature(buf) && buf[0] === 0x30) {
       throw new Error('64 DER (ecdsa) signatures not allowed')
     }
 
@@ -398,7 +433,7 @@ export class Signature {
    */
   static fromTxFormat(buf: Buffer): Signature {
     const nhashtype = buf.readUInt8(buf.length - 1)
-    const derbuf = buf.subarray(0, buf.length - 1)
+    const derbuf = buf.slice(0, buf.length - 1)
     const sig = Signature.fromDER(derbuf, false)
     sig.nhashtype = nhashtype
     return sig
@@ -411,7 +446,7 @@ export class Signature {
    * @returns Signature object
    */
   static fromDataFormat(buf: Buffer): Signature {
-    const derbuf = buf.subarray(0, buf.length)
+    const derbuf = buf.slice(0, buf.length)
     return Signature.fromDER(derbuf, false)
   }
 
@@ -422,7 +457,7 @@ export class Signature {
    * @returns Signature object
    */
   static fromString(str: string): Signature {
-    const buf = Buffer.from(str, 'hex')
+    const buf = BufferUtil.from(str, 'hex')
     return Signature.fromDER(buf)
   }
 
@@ -466,17 +501,17 @@ export class Signature {
     }
 
     // Parse r and s as big-endian (network byte order)
-    const r = buf.subarray(0, 32)
-    const s = buf.subarray(32, 64)
+    const r = buf.slice(0, 32)
+    const s = buf.slice(32, 64)
     let hashtype: Buffer | undefined
 
     if (buf.length === 65) {
-      hashtype = buf.subarray(64, 65)
+      hashtype = buf.slice(64, 65)
     }
 
     return {
-      r: new BN(r, 'be'), // Big-endian per Lotus spec
-      s: new BN(s, 'be'), // Big-endian per Lotus spec
+      r: BN.fromBuffer(r), // Big-endian per Lotus spec
+      s: BN.fromBuffer(s), // Big-endian per Lotus spec
       nhashtype: hashtype,
     }
   }
@@ -502,7 +537,7 @@ export class Signature {
    * @throws Error if DER format is invalid
    */
   static parseDER(buf: Buffer, strict: boolean = true): { r: BN; s: BN } {
-    if (!Buffer.isBuffer(buf)) {
+    if (!BufferUtil.isBuffer(buf)) {
       throw new Error('DER formatted signature should be a buffer')
     }
 
@@ -512,7 +547,7 @@ export class Signature {
     }
 
     let length = buf[1]
-    const buflength = buf.subarray(2).length
+    const buflength = buf.slice(2).length
     if (strict && length !== buflength) {
       throw new Error('Length byte should length of what follows')
     }
@@ -525,7 +560,7 @@ export class Signature {
     }
 
     const rlength = buf[2 + 1]
-    const rbuf = buf.subarray(2 + 2, 2 + 2 + rlength)
+    const rbuf = buf.slice(2 + 2, 2 + 2 + rlength)
     const r = new BN(rbuf, 'be')
 
     if (rlength !== rbuf.length) {
@@ -538,10 +573,7 @@ export class Signature {
     }
 
     const slength = buf[2 + 2 + rlength + 1]
-    const sbuf = buf.subarray(
-      2 + 2 + rlength + 2,
-      2 + 2 + rlength + 2 + slength,
-    )
+    const sbuf = buf.slice(2 + 2 + rlength + 2, 2 + 2 + rlength + 2 + slength)
     const s = new BN(sbuf, 'be')
 
     if (slength !== sbuf.length) {
@@ -594,11 +626,11 @@ export class Signature {
       val = val - 4
     }
 
-    const b1 = Buffer.from([val])
+    const b1 = BufferUtil.from([val])
     const b2 = this.r.toBuffer({ size: 32 })
     const b3 = this.s.toBuffer({ size: 32 })
 
-    return Buffer.concat([b1, b2, b3])
+    return BufferUtil.concat([b1, b2, b3])
   }
 
   /**
@@ -614,20 +646,24 @@ export class Signature {
     if (signingMethod === 'schnorr') {
       // Schnorr signatures: 64 bytes, big-endian (network byte order)
       // This matches the Lotus/BCH Schnorr specification
-      return Buffer.concat([
-        this.r.toArrayLike(Buffer, 'be', 32), // Big-endian for R.x
-        this.s.toArrayLike(Buffer, 'be', 32), // Big-endian for s
+      return BufferUtil.concat([
+        this.r.toBuffer({ size: 32 }), // Big-endian for R.x
+        this.s.toBuffer({ size: 32 }), // Big-endian for s
       ])
     }
 
-    const rnbuf = this.r.toArrayLike(Buffer, 'be')
-    const snbuf = this.s.toArrayLike(Buffer, 'be')
+    const rnbuf = this.r.toBuffer()
+    const snbuf = this.s.toBuffer()
 
     const rneg = (rnbuf[0] & 0x80) !== 0
     const sneg = (snbuf[0] & 0x80) !== 0
 
-    const rbuf = rneg ? Buffer.concat([Buffer.from([0x00]), rnbuf]) : rnbuf
-    const sbuf = sneg ? Buffer.concat([Buffer.from([0x00]), snbuf]) : snbuf
+    const rbuf = rneg
+      ? BufferUtil.concat([BufferUtil.from([0x00]), rnbuf])
+      : rnbuf
+    const sbuf = sneg
+      ? BufferUtil.concat([BufferUtil.from([0x00]), snbuf])
+      : snbuf
 
     const rlength = rbuf.length
     const slength = sbuf.length
@@ -636,10 +672,10 @@ export class Signature {
     const sheader = 0x02
     const header = 0x30
 
-    return Buffer.concat([
-      Buffer.from([header, length, rheader, rlength]),
+    return BufferUtil.concat([
+      BufferUtil.from([header, length, rheader, rlength]),
       rbuf,
-      Buffer.from([sheader, slength]),
+      BufferUtil.from([sheader, slength]),
       sbuf,
     ])
   }
@@ -679,6 +715,7 @@ export class Signature {
    * - Schnorr: [64-byte signature] + [sighash type (1 byte)] = 65 bytes
    *
    * The sighash byte indicates what parts of the transaction are signed.
+   * For Schnorr signatures (Taproot), defaults to SIGHASH_ALL | SIGHASH_LOTUS.
    *
    * @param signingMethod - 'ecdsa' (default) or 'schnorr'
    * @returns Buffer with signature + sighash byte appended
@@ -692,9 +729,14 @@ export class Signature {
    */
   toTxFormat(signingMethod?: SignatureSigningMethod): Buffer {
     const derbuf = this.toDER(signingMethod)
-    const buf = Buffer.alloc(1)
-    buf.writeUInt8(this.nhashtype || 0, 0)
-    return Buffer.concat([derbuf, buf])
+    const buf = BufferUtil.alloc(1)
+    // For Schnorr signatures, default to SIGHASH_ALL | SIGHASH_LOTUS (0x61)
+    // This is required for Taproot key-path spending
+    const defaultSighash = this.isSchnorr
+      ? Signature.SIGHASH_ALL | Signature.SIGHASH_LOTUS
+      : 0
+    buf.writeUInt8(this.nhashtype ?? defaultSighash, 0)
+    return BufferUtil.concat([derbuf, buf])
   }
 
   /**
@@ -789,12 +831,12 @@ export class Signature {
    * @returns true if S is in the low range [1, (n-1)/2]
    */
   hasLowS(): boolean {
-    const lowSThreshold = new BN(
+    const lowSThreshold = BN.fromString(
       '7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0',
-      16,
+      'hex',
     )
 
-    if (this.s.lt(new BN(1)) || this.s.gt(lowSThreshold)) {
+    if (this.s.lt(BN.One) || this.s.gt(lowSThreshold)) {
       return false
     }
     return true
@@ -805,7 +847,8 @@ export class Signature {
    *
    * Validates that the nhashtype is a valid sighash type value.
    * Valid base types are SIGHASH_ALL (1), SIGHASH_NONE (2), or SIGHASH_SINGLE (3).
-   * Can be combined with SIGHASH_FORKID (0x40) and SIGHASH_ANYONECANPAY (0x80).
+   * Can be combined with SIGHASH_FORKID (0x40), SIGHASH_LOTUS (0x60),
+   * and SIGHASH_ANYONECANPAY (0x80).
    *
    * @returns true if nhashtype is defined and valid
    */
@@ -814,26 +857,27 @@ export class Signature {
       return false
     }
 
-    // Check if SIGHASH_LOTUS is set (Taproot signatures)
-    if (this.nhashtype & Signature.SIGHASH_LOTUS) {
-      // LOTUS is valid, just check the base type
-      const baseMask =
-        ~(Signature.SIGHASH_LOTUS | Signature.SIGHASH_ANYONECANPAY) >>> 0
-      const baseType = this.nhashtype & baseMask
-      return (
-        baseType >= Signature.SIGHASH_ALL &&
-        baseType <= Signature.SIGHASH_SINGLE
-      )
-    }
-
-    // Original logic for FORKID signatures
-    const mask =
-      ~(Signature.SIGHASH_FORKID | Signature.SIGHASH_ANYONECANPAY) >>> 0
-    const temp = this.nhashtype & mask
-
-    if (temp < Signature.SIGHASH_ALL || temp > Signature.SIGHASH_SINGLE) {
+    // Validate base type (bits 0-4): must be ALL, NONE, or SINGLE
+    // Reference: lotusd/src/script/sighashtype.h BaseSigHashType
+    const baseType = this.nhashtype & 0x1f
+    if (
+      baseType < Signature.SIGHASH_ALL ||
+      baseType > Signature.SIGHASH_SINGLE
+    ) {
       return false
     }
+
+    // Validate algorithm bits (bits 5-6): must be LEGACY, FORKID, or LOTUS
+    // Reference: lotusd/src/script/sighashtype.h isDefined()
+    const algorithm = this.nhashtype & Signature.SIGHASH_ALGORITHM_MASK
+    if (
+      algorithm !== 0x00 && // SIGHASH_LEGACY
+      algorithm !== Signature.SIGHASH_FORKID && // 0x40
+      algorithm !== Signature.SIGHASH_LOTUS // 0x60
+    ) {
+      return false
+    }
+
     return true
   }
 
@@ -847,6 +891,6 @@ export class Signature {
    * @returns true if the signature portion (excluding last byte) is valid DER
    */
   static isTxDER(buf: Buffer): boolean {
-    return Signature.isDER(buf.subarray(0, buf.length - 1))
+    return Signature.isDER(buf.slice(0, buf.length - 1))
   }
 }

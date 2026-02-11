@@ -27,7 +27,6 @@
  *
  * @module MuSig2Signer
  */
-
 import { PrivateKey } from '../privatekey.js'
 import { PublicKey } from '../publickey.js'
 import { Signature } from '../crypto/signature.js'
@@ -37,15 +36,15 @@ import { Random } from '../crypto/random.js'
 import { Script } from '../script.js'
 import { Address } from '../address.js'
 import {
-  musigKeyAgg,
-  musigNonceGen,
-  musigNonceAgg,
-  musigPartialSign,
-  musigPartialSigVerify,
-  musigSigAgg,
-  type MuSigKeyAggContext,
-  type MuSigNonce,
-  type MuSigAggregatedNonce,
+  muSig2KeyAgg,
+  muSig2NonceGen,
+  muSig2NonceAgg,
+  muSig2PartialSign,
+  muSig2PartialSigVerify,
+  muSig2SigAgg,
+  type MuSig2KeyAggContext,
+  type MuSig2Nonce,
+  type MuSig2AggregatedNonce,
 } from '../crypto/musig2.js'
 import {
   MuSigSessionManager,
@@ -53,14 +52,16 @@ import {
   type MuSigSession,
 } from './session.js'
 import {
-  buildMuSigTaprootKey,
-  buildMuSigTaprootKeyWithScripts,
+  buildMuSig2TaprootKey,
+  buildMuSig2TaprootKeyWithScripts,
   signTaprootKeyPathWithMuSig2,
-  type MuSigTaprootKeyResult,
+  type MuSig2TaprootKeyResult,
 } from '../taproot/musig2.js'
 import { Transaction } from '../transaction/transaction.js'
 import { sighash } from '../transaction/sighash.js'
 import { BN } from '../crypto/bn.js'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 /**
  * Configuration for creating a MuSig2 signer
@@ -81,7 +82,7 @@ export interface MuSig2SignerConfig {
  */
 export interface MuSig2PrepareResult {
   /** Key aggregation context */
-  keyAggContext: MuSigKeyAggContext
+  keyAggContext: MuSig2KeyAggContext
 
   /** This signer's public nonces (share with other signers) */
   myPublicNonces: [Point, Point]
@@ -206,7 +207,7 @@ export class MuSig2Signer {
     const normalizedMessage = this._normalizeMessage(message)
 
     // Perform key aggregation (sorts keys internally for deterministic ordering)
-    const keyAggContext = musigKeyAgg(this.config.signers)
+    const keyAggContext = muSig2KeyAgg(this.config.signers)
 
     // SECURITY: Add random entropy by default if not explicitly provided
     // This provides defense-in-depth on top of RFC6979 deterministic generation
@@ -216,7 +217,7 @@ export class MuSig2Signer {
         : Random.getRandomBuffer(32)
 
     // Generate nonces with RFC6979 + randomness
-    const nonce = musigNonceGen(
+    const nonce = muSig2NonceGen(
       this.config.myPrivateKey,
       keyAggContext.aggregatedPubKey,
       normalizedMessage,
@@ -280,16 +281,16 @@ export class MuSig2Signer {
     const normalizedMessage = this._normalizeMessage(message)
 
     // Aggregate nonces
-    const aggregatedNonce = musigNonceAgg(allPublicNonces)
+    const aggregatedNonce = muSig2NonceAgg(allPublicNonces)
 
     // Create secret nonce from prepare result
-    const secretNonce: MuSigNonce = {
+    const secretNonce: MuSig2Nonce = {
       secretNonces: prepare.mySecretNonces,
       publicNonces: prepare.myPublicNonces,
     }
 
     // Create partial signature
-    return musigPartialSign(
+    return muSig2PartialSign(
       secretNonce,
       this.config.myPrivateKey,
       prepare.keyAggContext,
@@ -324,9 +325,9 @@ export class MuSig2Signer {
     message: Buffer | string,
   ): boolean {
     const normalizedMessage = this._normalizeMessage(message)
-    const aggregatedNonce = musigNonceAgg(allPublicNonces)
+    const aggregatedNonce = muSig2NonceAgg(allPublicNonces)
 
-    return musigPartialSigVerify(
+    return muSig2PartialSigVerify(
       partialSig,
       publicNonce,
       publicKey,
@@ -372,10 +373,10 @@ export class MuSig2Signer {
     const normalizedMessage = this._normalizeMessage(message)
 
     // Aggregate nonces
-    const aggregatedNonce = musigNonceAgg(allPublicNonces)
+    const aggregatedNonce = muSig2NonceAgg(allPublicNonces)
 
     // Aggregate partial signatures
-    const signature = musigSigAgg(
+    const signature = muSig2SigAgg(
       allPartialSigs,
       aggregatedNonce,
       normalizedMessage,
@@ -398,13 +399,13 @@ export class MuSig2Signer {
    * @param state - Optional 32-byte state data (e.g., NFT metadata hash)
    * @returns Taproot-specific preparation result
    */
-  prepareTaproot(): MuSigTaprootKeyResult & {
-    keyAggContext: MuSigKeyAggContext
+  prepareTaproot(): MuSig2TaprootKeyResult & {
+    keyAggContext: MuSig2KeyAggContext
   } {
-    const result = buildMuSigTaprootKey(this.config.signers)
+    const result = buildMuSig2TaprootKey(this.config.signers)
 
     // Get key aggregation context
-    const keyAggContext = musigKeyAgg(this.config.signers)
+    const keyAggContext = muSig2KeyAgg(this.config.signers)
 
     return {
       ...result,
@@ -426,7 +427,7 @@ export class MuSig2Signer {
    * @returns Partial signature for Taproot spending
    */
   signTaprootInput(
-    prepare: MuSigTaprootKeyResult & { keyAggContext: MuSigKeyAggContext },
+    prepare: MuSig2TaprootKeyResult & { keyAggContext: MuSig2KeyAggContext },
     allPublicNonces: Array<[Point, Point]>,
     transaction: Transaction,
     inputIndex: number,
@@ -449,7 +450,7 @@ export class MuSig2Signer {
     const normalizedSighash = this._normalizeMessage(sighashBuffer)
 
     // Aggregate nonces
-    const aggregatedNonce = musigNonceAgg(allPublicNonces)
+    const aggregatedNonce = muSig2NonceAgg(allPublicNonces)
 
     // SECURITY: Add random entropy by default if not explicitly provided
     const entropy =
@@ -458,7 +459,7 @@ export class MuSig2Signer {
         : Random.getRandomBuffer(32)
 
     // Get my nonces (we'll generate them fresh or use session state)
-    const nonce = musigNonceGen(
+    const nonce = muSig2NonceGen(
       this.config.myPrivateKey,
       prepare.keyAggContext.aggregatedPubKey,
       normalizedSighash,
@@ -497,7 +498,7 @@ export class MuSig2Signer {
    * @returns Final signature for Taproot input
    */
   completeTaprootSigning(
-    prepare: MuSigTaprootKeyResult & { keyAggContext: MuSigKeyAggContext },
+    prepare: MuSig2TaprootKeyResult & { keyAggContext: MuSig2KeyAggContext },
     allPublicNonces: Array<[Point, Point]>,
     allPartialSigs: BN[],
     transaction: Transaction,
@@ -519,10 +520,10 @@ export class MuSig2Signer {
     const normalizedSighash = this._normalizeMessage(sighashBuffer)
 
     // Aggregate nonces
-    const aggregatedNonce = musigNonceAgg(allPublicNonces)
+    const aggregatedNonce = muSig2NonceAgg(allPublicNonces)
 
     // Aggregate signatures (use commitment for Taproot!)
-    return musigSigAgg(
+    return muSig2SigAgg(
       allPartialSigs,
       aggregatedNonce,
       normalizedSighash,
@@ -607,7 +608,7 @@ export class MuSig2Signer {
   private _normalizeMessage(message: Buffer | string): Buffer {
     if (typeof message === 'string') {
       // Hash string to 32 bytes
-      return Hash.sha256(Buffer.from(message, 'utf8'))
+      return Hash.sha256(BufferUtil.from(message, 'utf8'))
     }
 
     if (message.length === 32) {

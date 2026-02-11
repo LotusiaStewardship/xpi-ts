@@ -1,4 +1,8 @@
 /**
+ * Copyright 2025-2026 The Lotusia Stewardship
+ * Github: https://github.com/LotusiaStewardship
+ * License: MIT
+ *
  * NFT Implementation for Lotus Taproot
  *
  * Implements NFT creation, transfer, and verification using Taproot's 32-byte state parameter.
@@ -16,30 +20,31 @@
  *
  * @module NFT
  */
-
-import { Hash } from '../crypto/hash.js'
-import { PublicKey } from '../publickey.js'
-import { PrivateKey } from '../privatekey.js'
-import { Script } from '../script.js'
-import { Opcode } from '../opcode.js'
+import { Hash } from './bitcore/crypto/hash.js'
+import { PublicKey } from './bitcore/publickey.js'
+import { PrivateKey } from './bitcore/privatekey.js'
+import { Script } from './bitcore/script.js'
+import { Opcode } from './bitcore/opcode.js'
 import {
   buildScriptPathTaproot,
-  buildKeyPathTaproot,
   extractTaprootCommitment,
   extractTaprootState,
+  createControlBlock,
   type TapNode,
   type TapLeaf,
-} from '../script/taproot.js'
-import { Transaction } from '../transaction/transaction.js'
-import { Output } from '../transaction/output.js'
-import { TaprootInput } from '../transaction/input.js'
+} from './bitcore/script/taproot.js'
+import { Transaction } from './bitcore/transaction/transaction.js'
+import { Output } from './bitcore/transaction/output.js'
+import { TaprootInput } from './bitcore/transaction/input/taproot.js'
 import {
   UnspentOutput,
   UnspentOutputData,
-} from '../transaction/unspentoutput.js'
-import { Signature } from '../crypto/signature.js'
-import { Address } from '../address.js'
-import { Network, type NetworkName } from '../networks.js'
+} from './bitcore/transaction/unspentoutput.js'
+import { Signature } from './bitcore/crypto/signature.js'
+import { Address } from './bitcore/address.js'
+import { Network, type NetworkName } from './bitcore/networks.js'
+import { BufferUtil } from './bitcore/index.js'
+import type { Buffer } from 'buffer/'
 
 /**
  * Standard NFT metadata structure
@@ -116,12 +121,14 @@ export interface NFTData {
   txid?: string
   /** Optional output index if minted */
   outputIndex?: number
-  /** Optional script tree info (for script-path NFTs) */
-  commitment?: PublicKey
-  /** Optional merkle root (for script-path NFTs) */
-  merkleRoot?: Buffer
-  /** Optional script leaves (for script-path NFTs) */
-  leaves?: TapLeaf[]
+  /** Script tree commitment public key (required for script-path) */
+  commitment: PublicKey
+  /** Merkle root of script tree (required for script-path) */
+  merkleRoot: Buffer
+  /** Control block for script-path spending (required) */
+  controlBlock: Buffer
+  /** Script leaves with merkle paths (required for script-path) */
+  leaves: TapLeaf[]
 }
 
 /**
@@ -184,6 +191,17 @@ export interface NFTTransferConfig {
   nftUtxo: NFTUtxo
   /** Metadata hash (must match UTXO) */
   metadataHash: Buffer
+  /** Script-path spending data (required for all NFT transfers) */
+  scriptPathData: {
+    /** Internal public key (before tweaking) */
+    internalPubKey: PublicKey
+    /** Merkle root of script tree */
+    merkleRoot: Buffer
+    /** Control block for script path spending */
+    controlBlock: Buffer
+    /** Script to execute (e.g., OP_CHECKSIG) */
+    tapScript: Script
+  }
   /** Optional fee in satoshis */
   fee?: number
 }
@@ -238,10 +256,12 @@ export interface NFTObject {
   txid?: string
   /** Optional output index */
   outputIndex?: number
-  /** Optional commitment (hex) */
-  commitment?: string
-  /** Optional merkle root (hex) */
-  merkleRoot?: string
+  /** Commitment public key (hex) - required for script-path */
+  commitment: string
+  /** Merkle root (hex) - required for script-path */
+  merkleRoot: string
+  /** Control block (hex) - required for script-path spending */
+  controlBlock: string
   /** Optional collection hash (hex) */
   collectionHash?: string
 }
@@ -279,6 +299,7 @@ export class NFT {
   private _outputIndex?: number
   private _commitment?: PublicKey
   private _merkleRoot?: Buffer
+  private _controlBlock?: Buffer
   private _leaves?: TapLeaf[]
   private _collectionHash?: Buffer
 
@@ -332,8 +353,32 @@ export class NFT {
       this._commitment = result.commitment
       this._merkleRoot = result.merkleRoot
       this._leaves = result.leaves
+
+      // Generate control block for script-path spending (use leaf index 0)
+      if (result.leaves.length > 0) {
+        this._controlBlock = createControlBlock(
+          config.ownerKey,
+          0,
+          config.scriptTree,
+        )
+      }
     } else {
-      this._script = buildKeyPathTaproot(config.ownerKey)
+      // Use script-path with simple CHECKSIG to store metadata in state
+      const scriptTree = { script: new Script().add(Opcode.OP_CHECKSIG) }
+      const result = buildScriptPathTaproot(
+        config.ownerKey,
+        scriptTree,
+        this._metadataHash,
+      )
+      this._script = result.script
+      this._commitment = result.commitment
+      this._merkleRoot = result.merkleRoot
+      this._leaves = result.leaves
+
+      // Generate control block for script-path spending
+      if (result.leaves.length > 0) {
+        this._controlBlock = createControlBlock(config.ownerKey, 0, scriptTree)
+      }
     }
 
     const address = this._script.toAddress(config.network)
@@ -483,6 +528,10 @@ export class NFT {
     return this._leaves
   }
 
+  get controlBlock(): Buffer | undefined {
+    return this._controlBlock
+  }
+
   get collectionHash(): Buffer | undefined {
     return this._collectionHash
   }
@@ -531,6 +580,26 @@ export class NFT {
       )
     }
 
+    // All NFTs require script-path spending data
+    if (
+      !this._merkleRoot ||
+      !this._controlBlock ||
+      !this._leaves ||
+      this._leaves.length === 0
+    ) {
+      throw new Error(
+        'NFT does not have required script-path spending data (merkleRoot, controlBlock, leaves)',
+      )
+    }
+
+    // Build required script-path data for spending the current NFT
+    const scriptPathData = {
+      internalPubKey: currentOwnerKey.publicKey,
+      merkleRoot: this._merkleRoot,
+      controlBlock: this._controlBlock,
+      tapScript: this._leaves[0].script,
+    }
+
     return NFTUtil.transferNFT({
       currentOwnerKey,
       newOwnerKey,
@@ -541,6 +610,7 @@ export class NFT {
         satoshis: this._satoshis,
       },
       metadataHash: this._metadataHash,
+      scriptPathData,
       fee,
     })
   }
@@ -633,6 +703,13 @@ export class NFT {
    * @returns JSON representation
    */
   toJSON(): NFTObject {
+    // Ensure all required script-path fields are present
+    if (!this._commitment || !this._merkleRoot || !this._controlBlock) {
+      throw new Error(
+        'NFT is missing required script-path data for JSON serialization',
+      )
+    }
+
     return {
       script: this._script.toBuffer().toString('hex'),
       address: this._address.toString(),
@@ -641,8 +718,9 @@ export class NFT {
       satoshis: this._satoshis,
       txid: this._txid,
       outputIndex: this._outputIndex,
-      commitment: this._commitment?.toString(),
-      merkleRoot: this._merkleRoot?.toString('hex'),
+      commitment: this._commitment.toString(),
+      merkleRoot: this._merkleRoot.toString('hex'),
+      controlBlock: this._controlBlock.toString('hex'),
       collectionHash: this._collectionHash?.toString('hex'),
     }
   }
@@ -653,6 +731,16 @@ export class NFT {
    * @returns NFTData interface object
    */
   toObject(): NFTData {
+    // Ensure all required script-path fields are present
+    if (
+      !this._commitment ||
+      !this._merkleRoot ||
+      !this._controlBlock ||
+      !this._leaves
+    ) {
+      throw new Error('NFT is missing required script-path data')
+    }
+
     return {
       script: this._script,
       address: this._address,
@@ -661,6 +749,10 @@ export class NFT {
       satoshis: this._satoshis,
       txid: this._txid,
       outputIndex: this._outputIndex,
+      commitment: this._commitment,
+      merkleRoot: this._merkleRoot,
+      controlBlock: this._controlBlock,
+      leaves: this._leaves,
     }
   }
 
@@ -700,7 +792,7 @@ export class NFTUtil {
    */
   static hashMetadata(metadata: NFTMetadata): Buffer {
     const metadataJSON = JSON.stringify(metadata)
-    return Hash.sha256(Buffer.from(metadataJSON, 'utf8'))
+    return Hash.sha256(BufferUtil.from(metadataJSON, 'utf8'))
   }
 
   /**
@@ -711,7 +803,7 @@ export class NFTUtil {
    */
   static hashCollection(collectionInfo: NFTCollectionMetadata): Buffer {
     const collectionJSON = JSON.stringify(collectionInfo)
-    return Hash.sha256(Buffer.from(collectionJSON, 'utf8'))
+    return Hash.sha256(BufferUtil.from(collectionJSON, 'utf8'))
   }
 
   /**
@@ -733,7 +825,7 @@ export class NFTUtil {
       nft: nftMetadata,
     }
     const combinedJSON = JSON.stringify(combinedData)
-    return Hash.sha256(Buffer.from(combinedJSON, 'utf8'))
+    return Hash.sha256(BufferUtil.from(combinedJSON, 'utf8'))
   }
 
   /**
@@ -814,9 +906,11 @@ export class NFTUtil {
     const metadataHash = NFTUtil.hashMetadata(metadata)
 
     // Create metadata validation script
-    // Script: OP_HASH160 <metadata_hash> OP_EQUALVERIFY OP_CHECKSIG
+    // Script: OP_SHA256 <metadata_hash> OP_EQUALVERIFY OP_CHECKSIG
+    // Note: Using OP_SHA256 because metadataHash is 32-byte SHA256.
+    // OP_HASH160 produces 20-byte RIPEMD160(SHA256) which would not match.
     const metadataScript = new Script()
-      .add(Opcode.OP_HASH160)
+      .add(Opcode.OP_SHA256)
       .add(metadataHash)
       .add(Opcode.OP_EQUALVERIFY)
       .add(Opcode.OP_CHECKSIG)
@@ -841,9 +935,10 @@ export class NFTUtil {
       metadataHash,
       metadata,
       satoshis,
-      // Additional script tree info for spending
+      // Script tree info required for script-path spending
       commitment: result.commitment,
       merkleRoot: result.merkleRoot,
+      controlBlock: createControlBlock(ownerKey, 0, scriptTree),
       leaves: result.leaves,
     }
   }
@@ -867,6 +962,8 @@ export class NFTUtil {
       throw new Error('Failed to create address from script')
     }
 
+    const controlBlock = createControlBlock(ownerKey, 0, scriptTree)
+
     return {
       script,
       address,
@@ -875,6 +972,7 @@ export class NFTUtil {
       satoshis,
       commitment,
       merkleRoot,
+      controlBlock,
       leaves,
     }
   }
@@ -901,7 +999,15 @@ export class NFTUtil {
   ): NFTWithCollection {
     const metadataHash = NFTUtil.hashCollectionNFT(collectionHash, nftMetadata)
 
-    const script = buildKeyPathTaproot(ownerKey)
+    // Use script-path Taproot to store metadata hash in state
+    const { script, commitment, merkleRoot, leaves } = buildScriptPathTaproot(
+      ownerKey,
+      { script: new Script().add(Opcode.OP_CHECKSIG) },
+      metadataHash,
+    )
+    const controlBlock = createControlBlock(ownerKey, 0, {
+      script: new Script().add(Opcode.OP_CHECKSIG),
+    })
     const address = script.toAddress(network)
     if (!address) {
       throw new Error('Failed to create address from script')
@@ -913,6 +1019,10 @@ export class NFTUtil {
       metadataHash,
       metadata: nftMetadata,
       satoshis,
+      commitment,
+      merkleRoot,
+      controlBlock,
+      leaves,
       collectionHash,
     }
   }
@@ -1070,7 +1180,14 @@ export class NFTUtil {
    * ```
    */
   static transferNFT(config: NFTTransferConfig): Transaction {
-    const { currentOwnerKey, newOwnerKey, nftUtxo, metadataHash, fee } = config
+    const {
+      currentOwnerKey,
+      newOwnerKey,
+      nftUtxo,
+      metadataHash,
+      fee,
+      scriptPathData,
+    } = config
 
     // Verify input script has the correct metadata hash
     const inputState = NFTUtil.extractMetadataHash(nftUtxo.script)
@@ -1079,7 +1196,12 @@ export class NFTUtil {
     }
 
     // Create new NFT output for recipient with same metadata hash
-    const newNFTScript = buildKeyPathTaproot(newOwnerKey)
+    // Use script-path Taproot to preserve metadata in state
+    const newNFTScript = buildScriptPathTaproot(
+      newOwnerKey,
+      { script: new Script().add(Opcode.OP_CHECKSIG) },
+      metadataHash,
+    ).script
 
     // Calculate output value (subtract fee if specified)
     const outputSatoshis = fee ? nftUtxo.satoshis - fee : nftUtxo.satoshis
@@ -1091,16 +1213,20 @@ export class NFTUtil {
     // Create transaction
     const tx = new Transaction()
 
-    // Add NFT input
+    // Add NFT input with script-path configuration (required for all NFTs)
     tx.addInput(
       new TaprootInput({
-        prevTxId: Buffer.from(nftUtxo.txid, 'hex'),
+        prevTxId: BufferUtil.from(nftUtxo.txid, 'hex'),
         outputIndex: nftUtxo.outputIndex,
         output: new Output({
           script: nftUtxo.script,
           satoshis: nftUtxo.satoshis,
         }),
-        script: new Script(), // Empty script for key path
+        script: new Script(),
+        internalPubKey: scriptPathData.internalPubKey,
+        merkleRoot: scriptPathData.merkleRoot,
+        controlBlock: scriptPathData.controlBlock,
+        tapScript: scriptPathData.tapScript,
       }),
     )
 
@@ -1112,10 +1238,11 @@ export class NFTUtil {
       }),
     )
 
-    // Sign with Schnorr + SIGHASH_LOTUS
+    // Sign with script-path sighash type (SIGHASH_FORKID)
+    // All NFTs use script-path spending which requires SIGHASH_FORKID
     tx.sign(
       currentOwnerKey,
-      Signature.SIGHASH_ALL | Signature.SIGHASH_LOTUS,
+      Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID,
       'schnorr',
     )
 

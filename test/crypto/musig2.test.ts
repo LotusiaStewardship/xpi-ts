@@ -6,6 +6,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
+import { Buffer } from 'buffer/'
 import {
   musigKeyAgg,
   musigNonceGen,
@@ -33,8 +34,9 @@ describe('MuSig2', () => {
 
       assert.strictEqual(ctx.pubkeys.length, 2)
       assert.ok(ctx.aggregatedPubKey)
-      assert.ok(ctx.keyAggCoeff.get(0))
-      assert.ok(ctx.keyAggCoeff.get(1))
+      // Coefficients are keyed by public key string, not index
+      assert.ok(ctx.keyAggCoeff.get(key1.publicKey.toString()))
+      assert.ok(ctx.keyAggCoeff.get(key2.publicKey.toString()))
     })
 
     it('should aggregate N public keys', () => {
@@ -50,8 +52,12 @@ describe('MuSig2', () => {
 
       assert.strictEqual(ctx.pubkeys.length, 5)
       assert.ok(ctx.aggregatedPubKey)
-      for (let i = 0; i < 5; i++) {
-        assert.ok(ctx.keyAggCoeff.get(i), `Coefficient ${i} should exist`)
+      // Coefficients are keyed by public key string, not index
+      for (const key of keys) {
+        assert.ok(
+          ctx.keyAggCoeff.get(key.publicKey.toString()),
+          `Coefficient for key should exist`,
+        )
       }
     })
 
@@ -221,9 +227,17 @@ describe('MuSig2', () => {
       const nonce2 = musigNonceGen(key2, ctx.aggregatedPubKey, message)
       const aggNonce = musigNonceAgg([nonce1.publicNonces, nonce2.publicNonces])
 
+      // With the new API, signing uses public key lookup, not index
+      // Create a key that's not in the context to test error handling
+      const unknownKey = new PrivateKey()
+      const unknownNonce = musigNonceGen(
+        unknownKey,
+        ctx.aggregatedPubKey,
+        message,
+      )
       assert.throws(() => {
-        musigPartialSign(nonce1, key1, ctx, 99, aggNonce, message)
-      }, /Invalid signer index/)
+        musigPartialSign(unknownNonce, unknownKey, ctx, 0, aggNonce, message)
+      }, /Public key not found in key aggregation context/)
     })
   })
 

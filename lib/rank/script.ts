@@ -3,6 +3,7 @@
  * Github: https://github.com/LotusiaStewardship
  * License: MIT
  */
+import { Buffer } from 'buffer/'
 import OpCode from './opcode.js'
 import { Script } from '../bitcore/script.js'
 

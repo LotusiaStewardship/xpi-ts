@@ -2,17 +2,16 @@
  * HDPublicKey implementation for Hierarchical Deterministic public keys
  * Migrated from bitcore-lib-xpi with ESM support
  */
-
-import { BN } from './crypto/bn.js'
-import { PublicKey } from './publickey.js'
-import { HDPrivateKey } from './hdprivatekey.js'
-import { Network, get as getNetwork, type NetworkName } from './networks.js'
-import { Hash } from './crypto/hash.js'
-import { Base58Check } from './encoding/base58check.js'
-import { JSUtil } from './util/js.js'
-import { Preconditions } from './util/preconditions.js'
-import { Point } from './crypto/point.js'
-import type { HDPrivateKeyBuffers } from './hdprivatekey.js'
+import { BN } from './crypto/bn'
+import { PublicKey } from './publickey'
+import { HDPrivateKey } from './hdprivatekey'
+import { Network, get as getNetwork, type NetworkName } from './networks'
+import { Hash } from './crypto/hash'
+import { Base58Check } from './encoding/base58check'
+import { JSUtil, BufferUtil } from './util'
+import { Preconditions } from './util/preconditions'
+import { Point } from './crypto/point'
+import type { Buffer } from 'buffer/'
 
 export interface HDPublicKeyData {
   xpubkey?: string
@@ -54,88 +53,167 @@ export type HDPublicKeyInput =
   | HDPublicKeyData
   | HDPublicKeyObject
 
+/**
+ * Hierarchical Deterministic Public Key (BIP32)
+ *
+ * Represents an extended public key that can derive child public keys
+ * without access to the corresponding private key. This enables watch-only
+ * wallets and public key derivation for non-hardened paths.
+ *
+ * @example
+ * ```typescript
+ * // Create from xpub string
+ * const hdPubKey = new HDPublicKey('xpub...')
+ *
+ * // Create from HDPrivateKey
+ * const hdPubKey = hdPrivKey.hdPublicKey
+ *
+ * // Derive child keys (non-hardened only)
+ * const child = hdPubKey.derive("m/0/1")
+ * const childByIndex = hdPubKey.deriveChild(0)
+ * ```
+ */
 export class HDPublicKey {
+  /** The Base58Check-encoded extended public key string */
   readonly xpubkey!: Buffer
+  /** The network this key belongs to */
   readonly network!: Network
+  /** The depth in the HD tree (0 for master key) */
   readonly depth!: number
+  /** The public key */
   readonly publicKey!: PublicKey
+  /** The fingerprint of this key (first 4 bytes of HASH160 of public key) */
   readonly fingerPrint!: Buffer
+  /** The fingerprint of the parent key */
   readonly parentFingerPrint!: Buffer
+  /** The child index used to derive this key */
   readonly childIndex!: number
+  /** The chain code used for child key derivation */
   readonly chainCode!: Buffer
-  private _buffers!: HDPublicKeyBuffers // Internal buffers for serialization
+  /** Internal buffers for serialization */
+  private _buffers!: HDPublicKeyBuffers
 
-  // Constants to match reference
+  /** Hardened key derivation threshold (2^31) */
   static readonly Hardened = 0x80000000
+  /** Valid aliases for the root element in derivation paths */
   static readonly RootElementAlias = ['m', 'M']
+  /** Size of the version field in bytes */
   static readonly VersionSize = 4
+  /** Size of the depth field in bytes */
   static readonly DepthSize = 1
+  /** Size of the parent fingerprint field in bytes */
   static readonly ParentFingerPrintSize = 4
+  /** Size of the child index field in bytes */
   static readonly ChildIndexSize = 4
+  /** Size of the chain code field in bytes */
   static readonly ChainCodeSize = 32
+  /** Size of the public key field in bytes */
   static readonly PublicKeySize = 33
+  /** Size of the checksum field in bytes */
   static readonly CheckSumSize = 4
+  /** Total size of the data portion (without checksum) in bytes */
   static readonly DataSize = 78
+  /** Total size of the serialized key (with checksum) in bytes */
   static readonly SerializedByteSize = 82
 
-  // Buffer position constants
+  /** Start position of version field in serialized buffer */
   static readonly VersionStart = 0
+  /** End position of version field in serialized buffer */
   static readonly VersionEnd =
     HDPublicKey.VersionStart + HDPublicKey.VersionSize
+  /** Start position of depth field in serialized buffer */
   static readonly DepthStart = HDPublicKey.VersionEnd
+  /** End position of depth field in serialized buffer */
   static readonly DepthEnd = HDPublicKey.DepthStart + HDPublicKey.DepthSize
+  /** Start position of parent fingerprint field in serialized buffer */
   static readonly ParentFingerPrintStart = HDPublicKey.DepthEnd
+  /** End position of parent fingerprint field in serialized buffer */
   static readonly ParentFingerPrintEnd =
     HDPublicKey.ParentFingerPrintStart + HDPublicKey.ParentFingerPrintSize
+  /** Start position of child index field in serialized buffer */
   static readonly ChildIndexStart = HDPublicKey.ParentFingerPrintEnd
+  /** End position of child index field in serialized buffer */
   static readonly ChildIndexEnd =
     HDPublicKey.ChildIndexStart + HDPublicKey.ChildIndexSize
+  /** Start position of chain code field in serialized buffer */
   static readonly ChainCodeStart = HDPublicKey.ChildIndexEnd
+  /** End position of chain code field in serialized buffer */
   static readonly ChainCodeEnd =
     HDPublicKey.ChainCodeStart + HDPublicKey.ChainCodeSize
+  /** Start position of public key field in serialized buffer */
   static readonly PublicKeyStart = HDPublicKey.ChainCodeEnd
+  /** End position of public key field in serialized buffer */
   static readonly PublicKeyEnd =
     HDPublicKey.PublicKeyStart + HDPublicKey.PublicKeySize
+  /** Start position of checksum field in serialized buffer */
   static readonly ChecksumStart = HDPublicKey.PublicKeyEnd
+  /** End position of checksum field in serialized buffer */
   static readonly ChecksumEnd =
     HDPublicKey.ChecksumStart + HDPublicKey.CheckSumSize
 
+  /**
+   * Creates a new HDPublicKey instance.
+   *
+   * @param data - The data to create the HDPublicKey from. Can be:
+   *   - A Base58Check-encoded xpub string
+   *   - A Buffer containing the serialized key
+   *   - An HDPublicKeyData object with key components
+   *   - An HDPublicKeyObject with string representations
+   *   - An HDPrivateKey to extract the public key from
+   * @throws Error if the data is invalid or cannot be parsed
+   *
+   * @example
+   * ```typescript
+   * // From xpub string
+   * const hdPubKey = new HDPublicKey('xpub...')
+   *
+   * // From HDPrivateKey
+   * const hdPubKey = new HDPublicKey(hdPrivateKey)
+   *
+   * // From object
+   * const hdPubKey = new HDPublicKey({
+   *   network: 'mainnet',
+   *   depth: 0,
+   *   parentFingerPrint: BufferUtil.alloc(4),
+   *   childIndex: 0,
+   *   chainCode: chainCodeBuffer,
+   *   publicKey: publicKey
+   * })
+   * ```
+   */
   constructor(data: HDPublicKeyInput) {
     if (data instanceof HDPublicKey) {
       return data
     }
+
+    // Allow calling HDPublicKey() without 'new' keyword by
+    // detecting when 'this' is not an instance and recursively
+    // calling the constructor with 'new'
     if (!(this instanceof HDPublicKey)) {
       return new HDPublicKey(data)
     }
-    if (data) {
-      if (typeof data === 'string' || Buffer.isBuffer(data)) {
-        const error = HDPublicKey.getSerializedError(data)
-        if (!error) {
-          return this._buildFromSerialized(data)
-        } else if (
-          Buffer.isBuffer(data) &&
-          !HDPublicKey.getSerializedError(data.toString())
-        ) {
-          return this._buildFromSerialized(data.toString())
-        } else {
-          throw error
-        }
-      } else {
-        if (typeof data === 'object' && data !== null) {
-          if (data instanceof HDPrivateKey) {
-            return this._buildFromPrivate(data)
-          } else {
-            return this._buildFromObject(
-              data as HDPublicKeyData | HDPublicKeyObject,
-            )
-          }
-        } else {
-          throw new Error('Unrecognized argument')
-        }
-      }
-    } else {
-      throw new Error('Must supply an argument to create a HDPublicKey')
+
+    Preconditions.checkArgument(
+      data !== undefined && data !== null,
+      'Must supply an argument to create a HDPublicKey',
+    )
+
+    // Handle HDPrivateKey specially before classification
+    if (data instanceof HDPrivateKey) {
+      return this._buildFromPrivate(data)
     }
+
+    // Handle serialized data (string or buffer) directly
+    if (typeof data === 'string' || BufferUtil.isBuffer(data)) {
+      return this._buildFromSerialized(data)
+    }
+
+    // Classify and transform object arguments
+    const info = this._classifyArguments(
+      data as HDPublicKeyData | HDPublicKeyObject,
+    )
+
+    return this._buildFromObject(info)
   }
 
   /**
@@ -172,7 +250,7 @@ export class HDPublicKey {
     data: string | Buffer,
     network?: string | Network,
   ): Error | null {
-    if (!(typeof data === 'string' || Buffer.isBuffer(data))) {
+    if (!(typeof data === 'string' || BufferUtil.isBuffer(data))) {
       return new Error('expected buffer or string')
     }
     if (typeof data === 'string' && !JSUtil.isHexa(data)) {
@@ -182,7 +260,7 @@ export class HDPublicKey {
         return new Error('Invalid base58 checksum')
       }
     }
-    if (Buffer.isBuffer(data) && data.length !== HDPublicKey.DataSize) {
+    if (BufferUtil.isBuffer(data) && data.length !== HDPublicKey.DataSize) {
       return new Error('Invalid length')
     }
     if (typeof data === 'string') {
@@ -211,10 +289,10 @@ export class HDPublicKey {
     if (!network) {
       return new Error('Invalid network argument')
     }
-    const version = Buffer.isBuffer(data)
-      ? data.subarray(HDPublicKey.VersionStart, HDPublicKey.VersionEnd)
-      : Buffer.from(
-          Base58Check.decode(data).subarray(
+    const version = BufferUtil.isBuffer(data)
+      ? data.slice(HDPublicKey.VersionStart, HDPublicKey.VersionEnd)
+      : BufferUtil.from(
+          Base58Check.decode(data).slice(
             HDPublicKey.VersionStart,
             HDPublicKey.VersionEnd,
           ),
@@ -259,7 +337,7 @@ export class HDPublicKey {
   ): HDPublicKeyData {
     if (typeof arg === 'string') {
       return HDPublicKey._transformString(arg)
-    } else if (Buffer.isBuffer(arg)) {
+    } else if (BufferUtil.isBuffer(arg)) {
       return HDPublicKey._transformBuffer(arg)
     } else if (typeof arg === 'object' && arg !== null) {
       if ('xpubkey' in arg) {
@@ -276,7 +354,7 @@ export class HDPublicKey {
     if (!JSUtil.isHexa(str)) {
       return HDPublicKey._transformSerialized(str)
     }
-    return HDPublicKey._transformBuffer(Buffer.from(str, 'hex'))
+    return HDPublicKey._transformBuffer(BufferUtil.from(str, 'hex'))
   }
 
   private static _transformSerialized(str: string): HDPublicKeyData {
@@ -296,10 +374,10 @@ export class HDPublicKey {
     }
 
     const depth = buf.readUInt8(4)
-    const parentFingerPrint = buf.subarray(5, 9)
+    const parentFingerPrint = buf.slice(5, 9)
     const childIndex = buf.readUInt32BE(9)
-    const chainCode = buf.subarray(13, 45)
-    const publicKeyBuffer = buf.subarray(45, 78)
+    const chainCode = buf.slice(13, 45)
+    const publicKeyBuffer = buf.slice(45, 78)
 
     return {
       network,
@@ -320,10 +398,10 @@ export class HDPublicKey {
     return {
       network,
       depth: obj.depth,
-      parentFingerPrint: Buffer.from(obj.parentFingerPrint, 'hex'),
+      parentFingerPrint: BufferUtil.from(obj.parentFingerPrint, 'hex'),
       childIndex: obj.childIndex,
-      chainCode: Buffer.from(obj.chainCode, 'hex'),
-      publicKey: PublicKey.fromBuffer(Buffer.from(obj.publicKey, 'hex')),
+      chainCode: BufferUtil.from(obj.chainCode, 'hex'),
+      publicKey: PublicKey.fromBuffer(BufferUtil.from(obj.publicKey, 'hex')),
     }
   }
 
@@ -333,7 +411,7 @@ export class HDPublicKey {
   private _buildFromPrivate(arg: HDPrivateKey): HDPublicKey {
     // Convert xprivkey version to xpubkey version
     // The HDPrivateKey stores xprivkey version, but we need xpubkey version
-    const xpubkeyVersion = Buffer.alloc(4)
+    const xpubkeyVersion = BufferUtil.alloc(4)
     xpubkeyVersion.writeUInt32BE(arg.network.xpubkey, 0)
 
     const args: HDPublicKeyBuffers = {
@@ -343,47 +421,11 @@ export class HDPublicKey {
       childIndex: arg._buffers.childIndex,
       chainCode: arg._buffers.chainCode,
       publicKey: Point.pointToCompressed(
-        Point.getG().mul(new BN(arg._buffers.privateKey)),
+        Point.getG().mul(BN.fromBuffer(arg._buffers.privateKey)),
       ),
       checksum: undefined, // Recalculate checksum with new version
     }
     return this._buildFromBuffers(args)
-  }
-
-  /**
-   * Build from serialized data
-   */
-  private _buildFromSerialized(arg: string | Buffer): HDPublicKey {
-    const decoded = typeof arg === 'string' ? Base58Check.decode(arg) : arg
-    const buffers: HDPublicKeyBuffers = {
-      version: decoded.subarray(
-        HDPublicKey.VersionStart,
-        HDPublicKey.VersionEnd,
-      ),
-      depth: decoded.subarray(HDPublicKey.DepthStart, HDPublicKey.DepthEnd),
-      parentFingerPrint: decoded.subarray(
-        HDPublicKey.ParentFingerPrintStart,
-        HDPublicKey.ParentFingerPrintEnd,
-      ),
-      childIndex: decoded.subarray(
-        HDPublicKey.ChildIndexStart,
-        HDPublicKey.ChildIndexEnd,
-      ),
-      chainCode: decoded.subarray(
-        HDPublicKey.ChainCodeStart,
-        HDPublicKey.ChainCodeEnd,
-      ),
-      publicKey: decoded.subarray(
-        HDPublicKey.PublicKeyStart,
-        HDPublicKey.PublicKeyEnd,
-      ),
-      checksum: decoded.subarray(
-        HDPublicKey.ChecksumStart,
-        HDPublicKey.ChecksumEnd,
-      ),
-      xpubkey: typeof arg === 'string' ? Buffer.from(arg) : arg,
-    }
-    return this._buildFromBuffers(buffers)
   }
 
   /**
@@ -404,7 +446,7 @@ export class HDPublicKey {
       arg.chainCode,
       arg.publicKey,
     ]
-    const concat = Buffer.concat(sequence)
+    const concat = BufferUtil.concat(sequence)
     const checksum = Base58Check.checksum(concat)
     if (!arg.checksum || !arg.checksum.length) {
       arg.checksum = checksum
@@ -420,12 +462,12 @@ export class HDPublicKey {
       )
     }
 
-    const xpubkey = Base58Check.encode(Buffer.concat(sequence))
-    arg.xpubkey = Buffer.from(xpubkey)
+    const xpubkey = Base58Check.encode(BufferUtil.concat(sequence))
+    arg.xpubkey = BufferUtil.from(xpubkey)
 
     const publicKey = new PublicKey(arg.publicKey, { network })
     const size = HDPublicKey.ParentFingerPrintSize
-    const fingerPrint = Hash.sha256ripemd160(publicKey.toBuffer()).subarray(
+    const fingerPrint = Hash.sha256ripemd160(publicKey.toBuffer()).slice(
       0,
       size,
     )
@@ -450,7 +492,7 @@ export class HDPublicKey {
   private static _validateBufferArguments(arg: HDPublicKeyBuffers): void {
     const checkBuffer = (name: string, size: number) => {
       const buff = arg[name as keyof HDPublicKeyBuffers]
-      if (!Buffer.isBuffer(buff)) {
+      if (!BufferUtil.isBuffer(buff)) {
         throw new Error(`${name} argument is not a buffer, it's ${typeof buff}`)
       }
       if (buff.length !== size) {
@@ -481,32 +523,38 @@ export class HDPublicKey {
       )
     }
 
+    // Build buffers from the classified data
     const buffers: HDPublicKeyBuffers = {
-      version: Buffer.alloc(4),
-      depth:
-        typeof arg.depth === 'number'
-          ? Buffer.from([arg.depth])
-          : Buffer.alloc(1), // Default empty buffer
-      parentFingerPrint:
-        typeof arg.parentFingerPrint === 'number'
-          ? Buffer.from([arg.parentFingerPrint])
-          : Buffer.isBuffer(arg.parentFingerPrint)
-            ? arg.parentFingerPrint
-            : Buffer.alloc(4),
-      childIndex: Buffer.alloc(4), // Default empty buffer
-      chainCode:
-        typeof arg.chainCode === 'string'
-          ? Buffer.from(arg.chainCode, 'hex')
-          : Buffer.isBuffer(arg.chainCode)
-            ? arg.chainCode
-            : Buffer.alloc(32),
-      publicKey:
-        typeof arg.publicKey === 'string'
-          ? Buffer.from(arg.publicKey, 'hex')
-          : Buffer.isBuffer(arg.publicKey)
-            ? arg.publicKey
-            : arg.publicKey?.toBuffer() || Buffer.alloc(33),
-      checksum: undefined, // Will be calculated automatically
+      // Version bytes (4 bytes) - will be set below based on network
+      version: BufferUtil.alloc(4),
+      // Depth in the derivation path (1 byte)
+      depth: BufferUtil.isBuffer(arg.depth)
+        ? (arg.depth as Buffer)
+        : BufferUtil.from([arg.depth ?? 0]),
+      // Fingerprint of the parent key (4 bytes)
+      parentFingerPrint: BufferUtil.isBuffer(arg.parentFingerPrint)
+        ? (arg.parentFingerPrint as Buffer)
+        : arg.parentFingerPrint
+          ? BufferUtil.from(arg.parentFingerPrint as string, 'hex')
+          : BufferUtil.alloc(4),
+      // Child index in the derivation path (4 bytes) - will be set below
+      childIndex: BufferUtil.alloc(4),
+      // Chain code for child key derivation (32 bytes)
+      chainCode: BufferUtil.isBuffer(arg.chainCode)
+        ? (arg.chainCode as Buffer)
+        : arg.chainCode
+          ? BufferUtil.from(arg.chainCode as string, 'hex')
+          : BufferUtil.alloc(32),
+      // Compressed public key (33 bytes)
+      publicKey: BufferUtil.isBuffer(arg.publicKey)
+        ? (arg.publicKey as Buffer)
+        : arg.publicKey instanceof PublicKey
+          ? arg.publicKey.toBuffer()
+          : arg.publicKey
+            ? BufferUtil.from(arg.publicKey as string, 'hex')
+            : BufferUtil.alloc(33),
+      // Checksum (4 bytes) - will be calculated automatically in _buildFromBuffers
+      checksum: undefined,
     }
 
     // Write the xpubkey version as a 32-bit big-endian integer
@@ -515,6 +563,41 @@ export class HDPublicKey {
     // Write the childIndex as a 32-bit big-endian integer
     if (typeof arg.childIndex === 'number') {
       buffers.childIndex.writeUInt32BE(arg.childIndex, 0)
+    }
+
+    return this._buildFromBuffers(buffers)
+  }
+
+  /**
+   * Build from serialized data (Base58Check-encoded xpub string or raw buffer)
+   * This method is called when deserializing an existing HDPublicKey
+   */
+  private _buildFromSerialized(arg: string | Buffer): HDPublicKey {
+    const decoded = typeof arg === 'string' ? Base58Check.decode(arg) : arg
+    const buffers: HDPublicKeyBuffers = {
+      version: decoded.slice(HDPublicKey.VersionStart, HDPublicKey.VersionEnd),
+      depth: decoded.slice(HDPublicKey.DepthStart, HDPublicKey.DepthEnd),
+      parentFingerPrint: decoded.slice(
+        HDPublicKey.ParentFingerPrintStart,
+        HDPublicKey.ParentFingerPrintEnd,
+      ),
+      childIndex: decoded.slice(
+        HDPublicKey.ChildIndexStart,
+        HDPublicKey.ChildIndexEnd,
+      ),
+      chainCode: decoded.slice(
+        HDPublicKey.ChainCodeStart,
+        HDPublicKey.ChainCodeEnd,
+      ),
+      publicKey: decoded.slice(
+        HDPublicKey.PublicKeyStart,
+        HDPublicKey.PublicKeyEnd,
+      ),
+      checksum: decoded.slice(
+        HDPublicKey.ChecksumStart,
+        HDPublicKey.ChecksumEnd,
+      ),
+      xpubkey: typeof arg === 'string' ? BufferUtil.from(arg) : arg,
     }
     return this._buildFromBuffers(buffers)
   }
@@ -551,12 +634,12 @@ export class HDPublicKey {
     }
 
     // Create 4-byte big-endian index buffer (BIP32 standard)
-    const indexBuffer = Buffer.alloc(4)
+    const indexBuffer = BufferUtil.alloc(4)
     indexBuffer.writeUInt32BE(index, 0)
-    const data = Buffer.concat([this.publicKey.toBuffer(), indexBuffer])
+    const data = BufferUtil.concat([this.publicKey.toBuffer(), indexBuffer])
     const hash = Hash.sha512hmac(data, this._buffers.chainCode)
-    const leftPart = new BN(hash.subarray(0, 32))
-    const chainCode = hash.subarray(32, 64)
+    const leftPart = BN.fromBuffer(hash.slice(0, 32))
+    const chainCode = hash.slice(32, 64)
 
     let publicKey: PublicKey
     try {
@@ -609,7 +692,7 @@ export class HDPublicKey {
    * Convert to buffer
    */
   toBuffer(): Buffer {
-    return Buffer.from(this._buffers.xpubkey || Buffer.alloc(0))
+    return BufferUtil.from(this._buffers.xpubkey || BufferUtil.alloc(0))
   }
 
   /**

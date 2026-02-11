@@ -6,7 +6,9 @@
  */
 
 import { pbkdf2 as noblePbkdf2 } from '@noble/hashes/pbkdf2'
-import { sha512 } from '@noble/hashes/sha512'
+import { sha512 } from '@noble/hashes/sha2'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 /**
  * PBKDF2 implementation using SHA512
@@ -26,11 +28,11 @@ export function pbkdf2(
     throw new Error('Requested key length too long')
   }
 
-  if (typeof key !== 'string' && !Buffer.isBuffer(key)) {
+  if (typeof key !== 'string' && !BufferUtil.isBuffer(key)) {
     throw new TypeError('key must a string or Buffer')
   }
 
-  if (typeof salt !== 'string' && !Buffer.isBuffer(salt)) {
+  if (typeof salt !== 'string' && !BufferUtil.isBuffer(salt)) {
     throw new TypeError('salt must a string or Buffer')
   }
 
@@ -50,5 +52,5 @@ export function pbkdf2(
     dkLen: dkLen,
   })
 
-  return Buffer.from(result)
+  return BufferUtil.from(result)
 }

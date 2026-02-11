@@ -1,17 +1,29 @@
 /**
  * Elliptic curve point operations for secp256k1
- * Migrated from bitcore-lib-xpi with ESM support and BigInt
+ * Migrated from bitcore-lib-xpi with ESM support
  */
 
 import elliptic from 'elliptic'
-import { BN } from './bn.js'
+import { BN } from './bn'
+import { BufferUtil } from '../util'
+import type { Buffer } from 'buffer/'
 
 const ecInstance = new elliptic.ec('secp256k1')
 const ecPoint = ecInstance.curve.point.bind(ecInstance.curve)
 const ecPointFromX = ecInstance.curve.pointFromX.bind(ecInstance.curve)
 
+/** Prefix byte for compressed point with odd Y-coordinate */
+export const PREFIX_Y_ODD = 0x03
+/** Prefix byte for compressed point with even Y-coordinate */
+export const PREFIX_Y_EVEN = 0x02
+
 export class Point {
   private _point: elliptic.curve.base.BasePoint
+
+  /** Buffer containing prefix byte for compressed point with odd Y-coordinate */
+  static readonly PrefixOddY = BufferUtil.from([PREFIX_Y_ODD])
+  /** Buffer containing prefix byte for compressed point with even Y-coordinate */
+  static readonly PrefixEvenY = BufferUtil.from([PREFIX_Y_EVEN])
 
   constructor(x: BN | string, y: BN | string, isRed?: boolean) {
     try {
@@ -26,7 +38,28 @@ export class Point {
   }
 
   /**
+   * Get the X coordinate of the point
+   */
+  get x(): BN {
+    const xBuffer = this._point.getX().toBuffer()
+    return BN.fromString(xBuffer.toString('hex'), 'hex')
+  }
+
+  /**
+   * Get the Y coordinate of the point
+   */
+  get y(): BN {
+    const yBuffer = this._point.getY().toBuffer()
+    return BN.fromString(yBuffer.toString('hex'), 'hex')
+  }
+
+  /**
    * Instantiate a valid secp256k1 Point from only the X coordinate
+   *
+   * @param odd - If true, use the odd Y coordinate; if false, use the even Y coordinate
+   * @param x - The X coordinate as a BN or hex string
+   * @returns A Point instance on the secp256k1 curve
+   * @throws {Error} If the X coordinate does not correspond to a valid curve point
    */
   static fromX(odd: boolean, x: BN | string): Point {
     try {
@@ -80,20 +113,6 @@ export class Point {
   }
 
   /**
-   * Will return the X coordinate of the Point
-   */
-  getX(): BN {
-    return new BN(this._point.getX().toString())
-  }
-
-  /**
-   * Will return the Y coordinate of the Point
-   */
-  getY(): BN {
-    return new BN(this._point.getY().toString())
-  }
-
-  /**
    * Will determine if the point is valid
    */
   validate(): Point {
@@ -104,8 +123,8 @@ export class Point {
     // Simple validation - just check if the point exists and is not infinity
     try {
       // Try to access the point's coordinates
-      const x = this.getX()
-      const y = this.getY()
+      const x = this.x
+      const y = this.y
 
       // Basic checks
       if (x === undefined || y === undefined) {
@@ -171,16 +190,29 @@ export class Point {
   }
 
   /**
-   * Convert point to compressed format
+   * Convert point to compressed format (33 bytes)
+   *
+   * Compressed format consists of:
+   * - 1 byte prefix: 0x02 if Y is even, 0x03 if Y is odd
+   * - 32 bytes: X coordinate
+   *
+   * @param point - The point to compress
+   * @returns 33-byte buffer containing the compressed point
+   *
+   * @example
+   * ```typescript
+   * const compressed = Point.pointToCompressed(publicKeyPoint)
+   * // Returns Buffer of length 33
+   * ```
    */
   static pointToCompressed(point: Point): Buffer {
-    const xbuf = point.getX().toArrayLike(Buffer, 'be', 32)
-    const y = point.getY()
+    const xbuf = point.x.toBuffer({ size: 32 })
+    const y = point.y
 
     const odd = y.mod(new BN(2)).isOdd()
-    const prefix = odd ? Buffer.from([0x03]) : Buffer.from([0x02])
+    const prefix = odd ? Point.PrefixOddY : Point.PrefixEvenY
 
-    return Buffer.concat([prefix, xbuf])
+    return BufferUtil.concat([prefix, xbuf])
   }
 
   /**
@@ -205,8 +237,8 @@ export class Point {
       return false
     }
 
-    const x = this.getX()
-    const y = this.getY()
+    const x = this.x
+    const y = this.y
 
     // secp256k1 field prime p
     const p = new BN(
@@ -230,7 +262,7 @@ export class Point {
   /**
    * Check if value is a square in the field
    *
-   * DEPRECATED: This function is slow (uses modPow).
+   * @deprecated This function is slow (uses modPow).
    * For checking if a point Y coordinate is a quadratic residue,
    * use hasSquare() instead which is optimized for secp256k1.
    */

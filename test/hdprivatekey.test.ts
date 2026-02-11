@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
+import { Buffer } from 'buffer/'
 import { HDPrivateKey } from '../lib/bitcore/hdprivatekey.js'
 import { Base58Check } from '../lib/bitcore/encoding/base58check.js'
 import { Networks } from '../lib/bitcore/networks.js'
@@ -75,7 +76,7 @@ describe('HDPrivateKey', () => {
       assert.strictEqual(depth, original.depth)
 
       // Bytes 5-8: parent fingerprint (4 bytes)
-      const parentFP = buffer.subarray(5, 9)
+      const parentFP = buffer.slice(5, 9)
       assert.strictEqual(
         parentFP.toString('hex'),
         original.parentFingerPrint.toString('hex'),
@@ -86,7 +87,7 @@ describe('HDPrivateKey', () => {
       assert.strictEqual(childIndex, original.childIndex)
 
       // Bytes 13-44: chain code (32 bytes)
-      const chainCode = buffer.subarray(13, 45)
+      const chainCode = buffer.slice(13, 45)
       assert.strictEqual(
         chainCode.toString('hex'),
         original.chainCode.toString('hex'),
@@ -96,7 +97,7 @@ describe('HDPrivateKey', () => {
       assert.strictEqual(buffer[45], 0x00)
 
       // Bytes 46-77: private key (32 bytes)
-      const privKeyBuffer = buffer.subarray(46, 78)
+      const privKeyBuffer = buffer.slice(46, 78)
       assert.strictEqual(
         privKeyBuffer.toString('hex'),
         original.privateKey.toBuffer().toString('hex'),

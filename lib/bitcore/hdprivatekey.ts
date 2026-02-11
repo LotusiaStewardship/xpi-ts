@@ -2,24 +2,24 @@
  * HDPrivateKey implementation for Hierarchical Deterministic keys
  * Migrated from bitcore-lib-xpi with ESM support
  */
-
-import { BN } from './crypto/bn.js'
-import { PrivateKey } from './privatekey.js'
-import { PublicKey } from './publickey.js'
-import { Point } from './crypto/point.js'
+import { BN } from './crypto/bn'
+import { PrivateKey } from './privatekey'
+import { PublicKey } from './publickey'
+import { Point } from './crypto/point'
 // Forward declaration - will be imported after HDPublicKey is defined
 import {
   Network,
   get as getNetwork,
   defaultNetwork,
   type NetworkName,
-} from './networks.js'
-import { Hash } from './crypto/hash.js'
-import { Random } from './crypto/random.js'
-import { Base58Check } from './encoding/base58check.js'
-import { JSUtil } from './util/js.js'
-import { Preconditions } from './util/preconditions.js'
-import { HDPublicKey } from './hdpublickey.js'
+} from './networks'
+import { Hash } from './crypto/hash'
+import { Random } from './crypto/random'
+import { Base58Check } from './encoding/base58check'
+import { JSUtil, BufferUtil } from './util'
+import { Preconditions } from './util/preconditions'
+import { HDPublicKey } from './hdpublickey'
+import type { Buffer } from 'buffer/'
 
 export interface HDPrivateKeyData {
   xprivkey?: string
@@ -125,7 +125,7 @@ export class HDPrivateKey {
   private _classifyArguments(data: HDPrivateKeyInput): HDPrivateKeyData {
     if (typeof data === 'string') {
       return HDPrivateKey._transformString(data)
-    } else if (Buffer.isBuffer(data)) {
+    } else if (BufferUtil.isBuffer(data)) {
       // Try to interpret buffer as Base58Check-encoded xprivkey string first
       // (most common case when retrieving from storage)
       try {
@@ -153,7 +153,7 @@ export class HDPrivateKey {
     if (!JSUtil.isHexa(str)) {
       return HDPrivateKey._transformSerialized(str)
     }
-    return HDPrivateKey._transformBuffer(Buffer.from(str, 'hex'))
+    return HDPrivateKey._transformBuffer(BufferUtil.from(str, 'hex'))
   }
 
   private static _transformSerialized(str: string): HDPrivateKeyData {
@@ -173,10 +173,10 @@ export class HDPrivateKey {
     }
 
     const depth = buf.readUInt8(4)
-    const parentFingerPrint = buf.subarray(5, 9)
+    const parentFingerPrint = buf.slice(5, 9)
     const childIndex = buf.readUInt32BE(9)
-    const chainCode = buf.subarray(13, 45)
-    const privateKeyBuffer = buf.subarray(46, 78) // Skip the 1-byte gap at position 45
+    const chainCode = buf.slice(13, 45)
+    const privateKeyBuffer = buf.slice(46, 78) // Skip the 1-byte gap at position 45
 
     return {
       network,
@@ -197,9 +197,9 @@ export class HDPrivateKey {
     return {
       network,
       depth: obj.depth,
-      parentFingerPrint: Buffer.from(obj.parentFingerPrint, 'hex'),
+      parentFingerPrint: BufferUtil.from(obj.parentFingerPrint, 'hex'),
       childIndex: obj.childIndex,
-      chainCode: Buffer.from(obj.chainCode, 'hex'),
+      chainCode: BufferUtil.from(obj.chainCode, 'hex'),
       privateKey: new PrivateKey(obj.privateKey, network),
     }
   }
@@ -213,9 +213,9 @@ export class HDPrivateKey {
     seed: Buffer,
     network?: Network | NetworkName,
   ): HDPrivateKeyData {
-    const hash = Hash.sha512hmac(seed, Buffer.from('Bitcoin seed'))
-    const privateKeyBuffer = hash.subarray(0, 32)
-    const chainCode = hash.subarray(32, 64)
+    const hash = Hash.sha512hmac(seed, BufferUtil.from('Bitcoin seed'))
+    const privateKeyBuffer = hash.slice(0, 32)
+    const chainCode = hash.slice(32, 64)
 
     const resolvedNetwork = network ? getNetwork(network) : defaultNetwork
     if (!resolvedNetwork) {
@@ -225,7 +225,7 @@ export class HDPrivateKey {
     return {
       network: resolvedNetwork,
       depth: 0,
-      parentFingerPrint: Buffer.alloc(4),
+      parentFingerPrint: BufferUtil.alloc(4),
       childIndex: 0,
       chainCode,
       privateKey: new PrivateKey(privateKeyBuffer, resolvedNetwork),
@@ -251,10 +251,10 @@ export class HDPrivateKey {
 
     // Create buffers for serialization
     const buffers: HDPrivateKeyBuffers = {
-      version: Buffer.alloc(4),
-      depth: Buffer.from([info.depth || 0]),
-      parentFingerPrint: info.parentFingerPrint || Buffer.alloc(4),
-      childIndex: Buffer.alloc(4),
+      version: BufferUtil.alloc(4),
+      depth: BufferUtil.from([info.depth || 0]),
+      parentFingerPrint: info.parentFingerPrint || BufferUtil.alloc(4),
+      childIndex: BufferUtil.alloc(4),
       chainCode: info.chainCode!,
       privateKey: info.privateKey!.toBuffer(),
       checksum: undefined, // Will be calculated automatically
@@ -270,12 +270,12 @@ export class HDPrivateKey {
     // Use the same approach as toBuffer() method
     const version = info.network!.xprivkey
     const depth = info.depth || 0
-    const parentFingerPrint = info.parentFingerPrint || Buffer.alloc(4)
+    const parentFingerPrint = info.parentFingerPrint || BufferUtil.alloc(4)
     const childIndex = info.childIndex || 0
     const chainCode = info.chainCode!
     const privateKeyBuffer = info.privateKey!.toBuffer()
 
-    const buf = Buffer.alloc(78)
+    const buf = BufferUtil.alloc(78)
     buf.writeUInt32BE(version, 0)
     buf.writeUInt8(depth, 4)
     parentFingerPrint.copy(buf, 5)
@@ -289,7 +289,7 @@ export class HDPrivateKey {
     JSUtil.defineImmutable(this, {
       network: info.network,
       depth: info.depth || 0,
-      parentFingerPrint: info.parentFingerPrint || Buffer.alloc(4),
+      parentFingerPrint: info.parentFingerPrint || BufferUtil.alloc(4),
       childIndex: info.childIndex || 0,
       chainCode: info.chainCode,
       privateKey: info.privateKey,
@@ -302,7 +302,7 @@ export class HDPrivateKey {
           info.privateKey!.toPublicKey().point,
           true,
         ).toBuffer(),
-      ).subarray(0, 4),
+      ).slice(0, 4),
       xprivkey: xprivkey,
       _buffers: buffers,
     })
@@ -446,7 +446,7 @@ export class HDPrivateKey {
       index += HDPrivateKey.Hardened
     }
 
-    const indexBuffer = Buffer.from([
+    const indexBuffer = BufferUtil.from([
       index >> 24,
       index >> 16,
       index >> 8,
@@ -458,18 +458,26 @@ export class HDPrivateKey {
       // The private key serialization in this case will not be exactly 32 bytes and can be
       // any value less, and the value is not zero-padded.
       const nonZeroPadded = this.privateKey.bn.toBuffer()
-      data = Buffer.concat([Buffer.from([0]), nonZeroPadded, indexBuffer])
+      data = BufferUtil.concat([
+        BufferUtil.from([0]),
+        nonZeroPadded,
+        indexBuffer,
+      ])
     } else if (hardened) {
       // Use 32-byte zero-padded serialization of the private key
       const privateKeyBuffer = this.privateKey.bn.toBuffer({ size: 32 })
-      data = Buffer.concat([Buffer.from([0]), privateKeyBuffer, indexBuffer])
+      data = BufferUtil.concat([
+        BufferUtil.from([0]),
+        privateKeyBuffer,
+        indexBuffer,
+      ])
     } else {
-      data = Buffer.concat([this.publicKey.toBuffer(), indexBuffer])
+      data = BufferUtil.concat([this.publicKey.toBuffer(), indexBuffer])
     }
 
     const hash = Hash.sha512hmac(data, this.chainCode)
-    const leftPart = BN.fromBuffer(hash.subarray(0, 32), { size: 32 })
-    const childChainCode = hash.subarray(32, 64)
+    const leftPart = BN.fromBuffer(hash.slice(0, 32), { size: 32 })
+    const childChainCode = hash.slice(32, 64)
 
     const childPrivateKey = leftPart
       .add(this.privateKey.toBigNumber())
@@ -486,7 +494,7 @@ export class HDPrivateKey {
       depth: this.depth + 1,
       parentFingerPrint: Hash.sha256ripemd160(
         this.privateKey.toPublicKey().toBuffer(),
-      ).subarray(0, 4),
+      ).slice(0, 4),
       childIndex: index,
       chainCode: childChainCode,
       privateKey: new PrivateKey({
@@ -570,7 +578,7 @@ export class HDPrivateKey {
     const chainCode = this.chainCode
     const privateKeyBuffer = this.privateKey.toBuffer()
 
-    const buf = Buffer.alloc(78)
+    const buf = BufferUtil.alloc(78)
     buf.writeUInt32BE(version, 0)
     buf.writeUInt8(depth, 4)
     parentFingerPrint.copy(buf, 5)
@@ -611,7 +619,7 @@ export class HDPrivateKey {
     hexa: string | Buffer,
     network?: Network | NetworkName,
   ): HDPrivateKey {
-    const seed = typeof hexa === 'string' ? Buffer.from(hexa, 'hex') : hexa
+    const seed = typeof hexa === 'string' ? BufferUtil.from(hexa, 'hex') : hexa
     return new HDPrivateKey(HDPrivateKey._fromSeed(seed, network))
   }
 

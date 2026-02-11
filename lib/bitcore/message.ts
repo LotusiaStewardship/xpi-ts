@@ -2,17 +2,44 @@
  * Message class for signing and verifying Bitcoin messages
  * Migrated from bitcore-lib-xpi with ESM support
  */
+import { Hash } from './crypto/hash'
+import { ECDSA } from './crypto/ecdsa'
+import { Signature } from './crypto/signature'
+import { PrivateKey } from './privatekey'
+import { PublicKey } from './publickey'
+import { Address } from './address'
+import { BufferUtil } from './util/buffer'
+import { JSUtil } from './util/js'
+import { BufferWriter } from './encoding/bufferwriter'
+import { Preconditions } from './util/preconditions'
+import type { Buffer } from 'buffer/'
 
-import { Hash } from './crypto/hash.js'
-import { ECDSA } from './crypto/ecdsa.js'
-import { Signature } from './crypto/signature.js'
-import { PrivateKey } from './privatekey.js'
-import { PublicKey } from './publickey.js'
-import { Address } from './address.js'
-import { JSUtil } from './util/js.js'
-import { BufferWriter } from './encoding/bufferwriter.js'
-import { Preconditions } from './util/preconditions.js'
-
+/**
+ * Message class for signing and verifying Bitcoin-style messages.
+ *
+ * Implements the Bitcoin message signing standard using ECDSA signatures
+ * with recovery. Messages are prefixed with a magic string before hashing
+ * to prevent signing arbitrary data that could be interpreted as transactions.
+ *
+ * The signature format includes a recovery flag that allows the public key
+ * to be recovered from the signature, enabling verification using only
+ * the message, signature, and expected address.
+ *
+ * @example
+ * ```typescript
+ * // Sign a message
+ * const message = new Message('Hello, Lotus!')
+ * const privateKey = new PrivateKey()
+ * const signature = message.sign(privateKey)
+ *
+ * // Verify with address
+ * const address = privateKey.toAddress()
+ * const verified = message.verify(address, signature)
+ *
+ * // Recover public key from signature
+ * const recoveredPubKey = message.recoverPublicKey(address, signature)
+ * ```
+ */
 export class Message {
   private _message: string
   public error?: string // Match reference: error property for verification failures
@@ -20,7 +47,7 @@ export class Message {
   // Constants to match reference
   // Note: Lotus uses "Bitcoin Signed Message:\n" for compatibility with Bitcoin message signing standard
   // This matches lotusd/src/util/message.cpp:22 MESSAGE_MAGIC
-  static readonly MAGIC_BYTES = Buffer.from('Bitcoin Signed Message:\n')
+  static readonly MAGIC_BYTES = BufferUtil.from('Bitcoin Signed Message:\n')
 
   constructor(message: string) {
     Preconditions.checkArgument(
@@ -35,9 +62,9 @@ export class Message {
    */
   magicHash(): Buffer {
     const prefix1 = BufferWriter.varintBufNum(Message.MAGIC_BYTES.length)
-    const messageBuffer = Buffer.from(this._message)
+    const messageBuffer = BufferUtil.from(this._message)
     const prefix2 = BufferWriter.varintBufNum(messageBuffer.length)
-    const buf = Buffer.concat([
+    const buf = BufferUtil.concat([
       prefix1,
       Message.MAGIC_BYTES,
       prefix2,
@@ -109,7 +136,7 @@ export class Message {
         : bitcoinAddress
 
     const signature = Signature.fromCompact(
-      Buffer.from(signatureString, 'base64'),
+      BufferUtil.from(signatureString, 'base64'),
     )
 
     // Recover the public key
@@ -148,7 +175,7 @@ export class Message {
         : bitcoinAddress
 
     const signature = Signature.fromCompact(
-      Buffer.from(signatureString, 'base64'),
+      BufferUtil.from(signatureString, 'base64'),
     )
 
     // Recover the public key
@@ -193,9 +220,10 @@ export class Message {
 
   /**
    * Convert to JSON
+   * @alias toObject API compatibility wrapper (may not be needed)
    */
-  toJSON(): string {
-    return JSON.stringify(this.toObject())
+  toJSON(): { message: string } {
+    return this.toObject()
   }
 
   /**

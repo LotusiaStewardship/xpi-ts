@@ -1,10 +1,14 @@
 /**
- * Transaction Input implementation for Lotus
+ * Transaction Input re-implementation for Lotus
  *
- * Signature Handling:
- * - All input types support both ECDSA and Schnorr signatures
- * - Signature type is specified via signingMethod parameter: 'ecdsa' or 'schnorr'
- * - Signatures are automatically detected by length when parsing (64 bytes = Schnorr)
+ * Re-implemented from lotusd source as the primary reference:
+ * - COutPoint: lotusd/src/primitives/transaction.h lines 22-54
+ * - CTxIn: lotusd/src/primitives/transaction.h lines 61-124
+ * - Sequence locks: lotusd/src/consensus/tx_verify.cpp lines 67-134
+ * - IsFinalTx: lotusd/src/consensus/tx_verify.cpp lines 19-38
+ *
+ * The TypeScript module in input.ts is used only as a reference for
+ * API compatibility with the bitcore-style modules in lib/bitcore.
  *
  * Input Types:
  * - Input (base class) - Generic input with P2PKH and P2PK support
@@ -12,53 +16,77 @@
  * - PublicKeyInput (P2PK) - Pay-to-pubkey
  * - MultisigInput - Multi-signature output spending
  * - MultisigScriptHashInput (P2SH) - Pay-to-script-hash multisig
+ * - TaprootInput (P2TR) - Pay-to-taproot (key-path and script-path)
+ * - MuSig2TaprootInput - MuSig2 multi-party taproot spending
  *
- * Critical Notes:
- * - TransactionSignature.signature property holds the actual Signature object
- * - Must call methods on signature.signature, not directly on TransactionSignature
- * - Size estimation constants are conservative (assume larger ECDSA signatures)
- *
- * Reference: lotusd/src/script/interpreter.cpp
+ * Signature Handling:
+ * - All input types support both ECDSA and Schnorr signatures
+ * - Signature type is specified via signingMethod parameter
+ * - Signatures are automatically detected by length when parsing
  */
-
-import { Preconditions } from '../util/preconditions.js'
-import { BitcoreError } from '../errors.js'
-import { BufferWriter } from '../encoding/bufferwriter.js'
-import { BufferReader } from '../encoding/bufferreader.js'
-import { BufferUtil } from '../util/buffer.js'
-import { JSUtil } from '../util/js.js'
-import { Script, empty } from '../script.js'
-import { Opcode } from '../opcode.js'
-import { BN } from '../crypto/bn.js'
-import { Output } from './output.js'
-import { PrivateKey } from '../privatekey.js'
-import { PublicKey } from '../publickey.js'
-import { Signature, SignatureSigningMethod } from '../crypto/signature.js'
-import { TransactionSignature } from './signature.js'
-import { Transaction } from './transaction.js'
-import { sign, verify, TransactionLike } from './sighash.js'
-import { Hash } from '../crypto/hash.js'
+import { Preconditions } from '../util/preconditions'
+import { BitcoreError } from '../errors'
+import { BufferWriter } from '../encoding/bufferwriter'
+import { BufferReader } from '../encoding/bufferreader'
+import { BufferUtil } from '../util/buffer'
+import { JSUtil } from '../util/js'
+import { Script } from '../script'
+import { Opcode } from '../opcode'
+import { BN, Hash } from '../crypto'
+import { Output } from './output'
+import { PrivateKey } from '../privatekey'
+import { PublicKey } from '../publickey'
+import { muSig2NonceAgg, muSig2SigAgg } from '../crypto/musig2'
+import { Point } from '../crypto/point'
+import { Signature, SignatureSigningMethod } from '../crypto/signature'
+import { TransactionSignature } from './signature'
+import { Transaction } from './transaction'
+import { sign, verify, TransactionLike } from './sighash'
 import {
   tweakPrivateKey,
   TAPROOT_SIGHASH_TYPE,
   extractTaprootCommitment,
 } from '../script/taproot'
 import type {
-  MuSigKeyAggContext,
-  MuSigAggregatedNonce,
-} from '../crypto/musig2.js'
-import { musigNonceAgg, musigSigAgg } from '../crypto/musig2.js'
-import { Point } from '../crypto/point.js'
+  MuSig2KeyAggContext,
+  MuSig2AggregatedNonce,
+} from '../crypto/musig2'
+import type { Buffer } from 'buffer/'
 
+/**
+ * Null outpoint index, matching COutPoint::NULL_INDEX in lotusd.
+ *
+ * Reference: lotusd/src/primitives/transaction.h line 28
+ */
+const NULL_INDEX = 0xffffffff
+
+/**
+ * 32-byte zero hash used for null outpoint detection.
+ */
+const NULL_HASH = BufferUtil.alloc(32)
+
+// ---------------------------------------------------------------------------
+// Interfaces
+// ---------------------------------------------------------------------------
+
+/**
+ * Data shape accepted by the Input constructor and factory methods.
+ *
+ * Mirrors the fields serialised in CTxIn (prevout + scriptSig + nSequence)
+ * plus the optional Output reference needed for signing.
+ */
 export interface InputData {
   prevTxId?: Buffer | string
   outputIndex?: number
   sequenceNumber?: number
   script?: Script | Buffer | string
   scriptBuffer?: Buffer
-  output?: Output // Output type
+  output?: Output
 }
 
+/**
+ * Plain-object representation returned by Input.toObject().
+ */
 export interface InputObject {
   prevTxId?: Buffer | string
   outputIndex?: number
@@ -69,44 +97,132 @@ export interface InputObject {
   output?: Output
 }
 
+// ---------------------------------------------------------------------------
+// Input (base class) — corresponds to CTxIn
+// ---------------------------------------------------------------------------
+
 /**
- * Represents a transaction input
+ * Represents a transaction input.
+ *
+ * Maps directly to lotusd's CTxIn which contains:
+ * - COutPoint prevout  (txid + output index)
+ * - CScript   scriptSig
+ * - uint32_t  nSequence
+ *
+ * Reference: lotusd/src/primitives/transaction.h lines 61-124
  */
 export class Input {
-  // Constants
-  static readonly MAXINT = 0xffffffff // Math.pow(2, 32) - 1
-  static readonly DEFAULT_SEQNUMBER = 0xffffffff
-  static readonly DEFAULT_LOCKTIME_SEQNUMBER = 0xfffffffe
-  static readonly DEFAULT_RBF_SEQNUMBER = 0xfffffffd
-  static readonly SEQUENCE_LOCKTIME_TYPE_FLAG = 0x400000 // (1 << 22)
-  static readonly SEQUENCE_LOCKTIME_DISABLE_FLAG = 0x80000000 // (1 << 31)
-  static readonly SEQUENCE_LOCKTIME_MASK = 0xffff
-  static readonly SEQUENCE_LOCKTIME_GRANULARITY = 512 // 512 seconds
-  static readonly SEQUENCE_BLOCKDIFF_LIMIT = 0xffff // 16 bits
+  // -----------------------------------------------------------------------
+  // Static constants — sourced from CTxIn in lotusd/src/primitives/transaction.h
+  // -----------------------------------------------------------------------
 
-  // Subclasses
-  static PublicKey: typeof PublicKeyInput
-  static PublicKeyHash: typeof PublicKeyHashInput
-  static Multisig: typeof MultisigInput
-  static MultisigScriptHash: typeof MultisigScriptHashInput
-  static Taproot: typeof TaprootInput
-  static MuSigTaproot: typeof MuSigTaprootInput
-  static P2PKH: typeof PublicKeyHashInput
-  static P2SH: typeof MultisigScriptHashInput
-  static P2TR: typeof TaprootInput
-
-  // Instance properties
   /**
-   * The transaction ID of the previous output being spent, as a Buffer.
-   * This buffer is stored in internal (little-endian) order, as per Lotus transaction format,
-   * but is typically displayed in RPCs or hex as big-endian (human-readable) order.
+   * Maximum value for a uint32 field (2^32 - 1).
+   */
+  static readonly MAXINT = 0xffffffff
+
+  /**
+   * Default sequence number — disables nLockTime when set on every input.
+   *
+   * Reference: CTxIn::SEQUENCE_FINAL (transaction.h line 71)
+   */
+  static readonly DEFAULT_SEQNUMBER = 0xffffffff
+
+  /**
+   * Sequence number used when nLockTime is active.
+   * One less than SEQUENCE_FINAL so the tx is not considered final.
+   */
+  static readonly DEFAULT_LOCKTIME_SEQNUMBER = 0xfffffffe
+
+  /**
+   * Sequence number signalling opt-in Replace-By-Fee (BIP 125).
+   */
+  static readonly DEFAULT_RBF_SEQNUMBER = 0xfffffffd
+
+  /**
+   * If this flag is set, CTxIn::nSequence is NOT interpreted as a
+   * relative lock-time.
+   *
+   * Reference: CTxIn::SEQUENCE_LOCKTIME_DISABLE_FLAG (transaction.h line 78)
+   */
+  static readonly SEQUENCE_LOCKTIME_DISABLE_FLAG = 1 << 31
+
+  /**
+   * If CTxIn::nSequence encodes a relative lock-time and this flag is
+   * set, the relative lock-time has units of 512 seconds; otherwise it
+   * specifies blocks with a granularity of 1.
+   *
+   * Reference: CTxIn::SEQUENCE_LOCKTIME_TYPE_FLAG (transaction.h line 85)
+   */
+  static readonly SEQUENCE_LOCKTIME_TYPE_FLAG = 1 << 22
+
+  /**
+   * Mask applied to extract the lock-time value from the sequence field.
+   *
+   * Reference: CTxIn::SEQUENCE_LOCKTIME_MASK (transaction.h line 91)
+   */
+  static readonly SEQUENCE_LOCKTIME_MASK = 0x0000ffff
+
+  /**
+   * Granularity exponent for time-based relative lock-times.
+   *
+   * In lotusd this is stored as the shift amount (9), meaning the
+   * multiplier is 2^9 = 512 seconds. We expose the multiplier directly
+   * for convenience in the TypeScript API.
+   *
+   * Reference: CTxIn::SEQUENCE_LOCKTIME_GRANULARITY (transaction.h line 101)
+   */
+  static readonly SEQUENCE_LOCKTIME_GRANULARITY = 512
+
+  /**
+   * Maximum block-height difference encodable in the sequence field.
+   */
+  static readonly SEQUENCE_BLOCKDIFF_LIMIT = 0xffff
+
+  // -----------------------------------------------------------------------
+  // Instance properties — mirror CTxIn fields
+  // -----------------------------------------------------------------------
+
+  /**
+   * Previous transaction ID as a 32-byte Buffer in internal
+   * (little-endian) byte order, matching lotusd's COutPoint::txid.
+   *
+   * Reference: lotusd/src/primitives/transaction.h line 24
    */
   prevTxId!: Buffer
+
+  /**
+   * Index into the previous transaction's vout.
+   *
+   * Reference: lotusd/src/primitives/transaction.h line 25
+   */
   outputIndex!: number
+
+  /**
+   * Sequence number.
+   *
+   * Reference: lotusd/src/primitives/transaction.h line 65
+   */
   sequenceNumber!: number
+
+  /**
+   * The raw scriptSig bytes.
+   */
   private _scriptBuffer!: Buffer
+
+  /**
+   * Lazily-parsed Script object.
+   */
   private _script?: Script
-  output?: Output // Output type
+
+  /**
+   * The previous output being spent (optional; required for signing).
+   */
+  output?: Output
+
+  // -----------------------------------------------------------------------
+  // Construction
+  // -----------------------------------------------------------------------
 
   constructor(params?: InputData) {
     if (params) {
@@ -114,11 +230,16 @@ export class Input {
     }
   }
 
-  // Factory function to allow calling Input() without 'new'
+  /**
+   * Factory — allows calling Input.create() instead of new Input().
+   */
   static create(params?: InputData): Input {
     return new Input(params)
   }
 
+  /**
+   * Construct from a plain object.
+   */
   static fromObject(obj: InputData): Input {
     Preconditions.checkArgument(
       typeof obj === 'object' && obj !== null,
@@ -128,14 +249,22 @@ export class Input {
     return input._fromObject(obj)
   }
 
+  /**
+   * Populate this instance from an InputData object.
+   *
+   * Validates prevTxId, sets defaults matching CTxIn's default
+   * constructor (nSequence = SEQUENCE_FINAL).
+   *
+   * Reference: CTxIn default constructor (transaction.h line 103)
+   */
   private _fromObject(params: InputData): Input {
     let prevTxId: Buffer
     if (typeof params.prevTxId === 'string' && JSUtil.isHexa(params.prevTxId)) {
-      prevTxId = Buffer.from(params.prevTxId, 'hex')
-    } else if (Buffer.isBuffer(params.prevTxId)) {
+      prevTxId = BufferUtil.from(params.prevTxId, 'hex')
+    } else if (BufferUtil.isBuffer(params.prevTxId)) {
       prevTxId = params.prevTxId
     } else {
-      prevTxId = Buffer.alloc(0) // Default empty buffer
+      prevTxId = BufferUtil.alloc(0)
     }
 
     this.output = params.output
@@ -154,8 +283,13 @@ export class Input {
     return this
   }
 
+  // -----------------------------------------------------------------------
+  // Script accessors
+  // -----------------------------------------------------------------------
+
   /**
-   * Get the script for this input
+   * Get the parsed Script for this input's scriptSig.
+   * Returns null for coinbase (null) inputs.
    */
   get script(): Script | null {
     if (this.isNull()) {
@@ -163,21 +297,20 @@ export class Input {
     }
     if (!this._script) {
       this._script = new Script(this._scriptBuffer)
-      // Mark as input script
       ;(this._script as Script & { _isInput?: boolean })._isInput = true
     }
     return this._script
   }
 
   /**
-   * Get the script buffer
+   * Get the raw scriptSig bytes.
    */
   get scriptBuffer(): Buffer {
     return this._scriptBuffer
   }
 
   /**
-   * Set the script for this input
+   * Set the scriptSig from a Script, Buffer, or hex/utf8 string.
    */
   setScript(script: Script | Buffer | string | null): Input {
     this._script = undefined
@@ -185,18 +318,17 @@ export class Input {
       this._script = script
       this._scriptBuffer = script.toBuffer()
     } else if (script === null) {
-      this._script = empty()
+      this._script = Script.empty()
       this._scriptBuffer = this._script.toBuffer()
-    } else if (Buffer.isBuffer(script)) {
+    } else if (BufferUtil.isBuffer(script)) {
       this._scriptBuffer = script
       this._script = Script.fromBuffer(script)
     } else if (typeof script === 'string') {
       if (JSUtil.isHexa(script)) {
-        this._scriptBuffer = Buffer.from(script, 'hex')
+        this._scriptBuffer = BufferUtil.from(script, 'hex')
         this._script = Script.fromBuffer(this._scriptBuffer)
       } else {
-        // Assume it's a script string
-        this._scriptBuffer = Buffer.from(script, 'utf8')
+        this._scriptBuffer = BufferUtil.from(script, 'utf8')
         this._script = Script.fromBuffer(this._scriptBuffer)
       }
     } else {
@@ -205,33 +337,55 @@ export class Input {
     return this
   }
 
+  // -----------------------------------------------------------------------
+  // Outpoint helpers — correspond to COutPoint methods
+  // -----------------------------------------------------------------------
+
   /**
-   * Check if this is a null input (coinbase)
+   * Check if this input references a null outpoint.
+   *
+   * A null outpoint has an all-zero txid and index == NULL_INDEX.
+   *
+   * Reference: COutPoint::IsNull() (transaction.h line 35)
    */
   isNull(): boolean {
-    return (
-      this.prevTxId.toString('hex') ===
-        '0000000000000000000000000000000000000000000000000000000000000000' &&
-      this.outputIndex === 0xffffffff
-    )
+    return this.prevTxId === NULL_HASH && this.outputIndex === NULL_INDEX
   }
 
+  // -----------------------------------------------------------------------
+  // Sequence / finality helpers — derived from lotusd consensus logic
+  // -----------------------------------------------------------------------
+
   /**
-   * Check if this input is final
+   * An input is considered "final" when its sequence number is not
+   * SEQUENCE_FINAL (0xffffffff). This mirrors the per-input check in
+   * IsFinalTx (tx_verify.cpp line 33).
+   *
+   * Note: the name `isFinal` is kept for bitcore API compatibility,
+   * but the semantics match lotusd: returns true when the input
+   * signals that nLockTime should be enforced (i.e. sequence != final).
+   *
+   * Reference: lotusd/src/consensus/tx_verify.cpp lines 32-34
    */
   isFinal(): boolean {
-    return this.sequenceNumber !== 4294967295
+    return this.sequenceNumber !== Input.DEFAULT_SEQNUMBER
   }
 
   /**
-   * Check if this input has a sequence number
+   * Whether this input has a non-default sequence number.
    */
   hasSequence(): boolean {
     return this.sequenceNumber !== Input.DEFAULT_SEQNUMBER
   }
 
   /**
-   * Check if this input has a relative lock time
+   * Whether this input encodes a BIP 68 relative lock-time.
+   *
+   * A relative lock-time is active when:
+   * 1. The disable flag (bit 31) is NOT set, AND
+   * 2. The sequence is not the default (SEQUENCE_FINAL)
+   *
+   * Reference: lotusd/src/consensus/tx_verify.cpp lines 98-102
    */
   hasRelativeLockTime(): boolean {
     return (
@@ -242,7 +396,9 @@ export class Input {
   }
 
   /**
-   * Get the relative lock time value
+   * Extract the raw relative lock-time value from the sequence field.
+   *
+   * Reference: lotusd/src/consensus/tx_verify.cpp lines 123-130
    */
   getRelativeLockTime(): bigint {
     if (!this.hasRelativeLockTime()) {
@@ -252,7 +408,10 @@ export class Input {
   }
 
   /**
-   * Check if the relative lock time is in blocks
+   * Whether the relative lock-time is time-based (512-second units)
+   * rather than block-based.
+   *
+   * Reference: lotusd/src/consensus/tx_verify.cpp line 106
    */
   isRelativeLockTimeInBlocks(): boolean {
     if (!this.hasRelativeLockTime()) {
@@ -262,7 +421,7 @@ export class Input {
   }
 
   /**
-   * Get the relative lock time in blocks
+   * Get the relative lock-time in blocks (0 if time-based or disabled).
    */
   getRelativeLockTimeInBlocks(): number {
     if (!this.isRelativeLockTimeInBlocks()) {
@@ -272,7 +431,12 @@ export class Input {
   }
 
   /**
-   * Get the relative lock time in seconds
+   * Get the relative lock-time in seconds (0 if block-based or disabled).
+   *
+   * The raw value is left-shifted by 9 (multiplied by 512) to convert
+   * to seconds, matching lotusd's SEQUENCE_LOCKTIME_GRANULARITY.
+   *
+   * Reference: lotusd/src/consensus/tx_verify.cpp lines 120-125
    */
   getRelativeLockTimeInSeconds(): number {
     if (this.isRelativeLockTimeInBlocks()) {
@@ -284,18 +448,21 @@ export class Input {
     )
   }
 
+  // -----------------------------------------------------------------------
+  // Serialisation — matches CTxIn serialisation format
+  // -----------------------------------------------------------------------
+
   /**
-   * Convert to object representation
+   * Convert to a plain-object representation.
    */
   toObject(): InputObject {
     const obj: InputObject = {
-      prevTxId: Buffer.from(this.prevTxId).toString('hex'),
+      prevTxId: BufferUtil.from(this.prevTxId).toString('hex'),
       outputIndex: this.outputIndex,
       sequenceNumber: this.sequenceNumber,
       script: this._scriptBuffer.toString('hex'),
     }
 
-    // Add human readable form if input contains valid script
     if (this.script) {
       ;(obj as InputObject & { scriptString?: string }).scriptString =
         this.script.toASM()
@@ -309,12 +476,22 @@ export class Input {
   }
 
   /**
-   * Convert to JSON
+   * Convert to JSON (alias for toObject)
    */
-  toJSON = this.toObject
+  toJSON(): InputObject {
+    return this.toObject()
+  }
 
   /**
-   * Create from buffer reader
+   * Deserialise from a BufferReader.
+   *
+   * Wire format (matching CTxIn SERIALIZE_METHODS):
+   *   prevout.txid  (32 bytes, internal order)
+   *   prevout.n     (uint32_t LE)
+   *   scriptSig     (var-length)
+   *   nSequence     (uint32_t LE)
+   *
+   * Reference: lotusd/src/primitives/transaction.h lines 112-114
    */
   static fromBufferReader(br: BufferReader): Input {
     const input = new Input()
@@ -326,7 +503,7 @@ export class Input {
   }
 
   /**
-   * Serialize to buffer
+   * Serialise to a Buffer.
    */
   toBuffer(): Buffer {
     const bw = new BufferWriter()
@@ -338,7 +515,7 @@ export class Input {
   }
 
   /**
-   * Write to buffer writer
+   * Write to a BufferWriter.
    */
   toBufferWriter(writer?: BufferWriter): BufferWriter {
     if (!writer) {
@@ -354,20 +531,23 @@ export class Input {
   }
 
   /**
-   * Get the size of this input in bytes
+   * Byte size of this input when serialised.
    */
   getSize(): number {
     return (
-      32 + // prevTxId
-      4 + // outputIndex
+      32 +
+      4 +
       BufferWriter.varintBufNum(this._scriptBuffer.length).length +
-      this._scriptBuffer.length + // script
-      4 // sequenceNumber
+      this._scriptBuffer.length +
+      4
     )
   }
 
   /**
-   * Check if this input is valid
+   * Basic validity check.
+   *
+   * Coinbase inputs are always valid. Regular inputs must have a 32-byte
+   * prevTxId, a valid outputIndex, and a non-empty scriptSig.
    */
   isValid(): boolean {
     if (this.isNull()) {
@@ -376,27 +556,37 @@ export class Input {
     return (
       this.prevTxId.length === 32 &&
       this.outputIndex >= 0 &&
-      this.outputIndex <= 0xffffffff &&
+      this.outputIndex <= NULL_INDEX &&
       this._scriptBuffer.length > 0
     )
   }
 
   /**
-   * Clone this input
+   * Create a deep copy of this input.
    */
   clone(): Input {
     return new Input({
-      prevTxId: Buffer.from(this.prevTxId),
+      prevTxId: BufferUtil.from(this.prevTxId),
       outputIndex: this.outputIndex,
       sequenceNumber: this.sequenceNumber,
-      scriptBuffer: Buffer.from(this._scriptBuffer),
+      scriptBuffer: BufferUtil.from(this._scriptBuffer),
       output: this.output,
     })
   }
 
   /**
-   * Get signatures for the provided PrivateKey
-   * @abstract
+   * Get signatures for the provided PrivateKey.
+   *
+   * The base class handles P2PKH and P2PK outputs. Subclasses override
+   * for their specific script types.
+   *
+   * @param transaction - The transaction being signed
+   * @param privateKey - Key to sign with
+   * @param index - Input index within the transaction
+   * @param sigtype - Sighash type
+   * @param hashData - Pre-computed pubkey hash (optimisation)
+   * @param signingMethod - 'ecdsa' or 'schnorr'
+   * @returns Array of TransactionSignature objects
    */
   getSignatures(
     transaction: Transaction,
@@ -414,7 +604,6 @@ export class Input {
     sigtype = sigtype || Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID
     const publicKey = privateKey.publicKey
 
-    // Check if this is a P2PKH output
     if (this.output!.script.isPublicKeyHashOut()) {
       const addressHash = hashData || Hash.sha256ripemd160(publicKey.toBuffer())
       if (
@@ -443,9 +632,7 @@ export class Input {
           }),
         ]
       }
-    }
-    // Check if this is a P2PK output
-    else if (this.output!.script.isPublicKeyOut()) {
+    } else if (this.output!.script.isPublicKeyOut()) {
       if (
         publicKey.toString() ===
         this.output!.script.getPublicKey().toString('hex')
@@ -476,16 +663,18 @@ export class Input {
   }
 
   /**
-   * Check if this input is fully signed
-   * @abstract
+   * Check if this input is fully signed.
+   * @abstract — subclasses must override.
    */
   isFullySigned(): boolean {
     throw new Error('Input#isFullySigned')
   }
 
   /**
-   * Add signature to this input
-   * @abstract
+   * Add a signature to this input.
+   *
+   * The base class handles P2PKH and P2PK script construction.
+   * Subclasses override for their specific script types.
    */
   addSignature(
     transaction: Transaction,
@@ -497,21 +686,16 @@ export class Input {
       'Signature is invalid',
     )
 
-    // Determine input type based on output script and create appropriate input script
     if (this.output?.script.isPublicKeyHashOut()) {
-      // P2PKH input: signature + public key
       const script = new Script()
       script.add(signature.signature.toTxFormat(signingMethod))
       script.add(signature.publicKey.toBuffer())
       this.setScript(script)
     } else if (this.output?.script.isPublicKeyOut()) {
-      // P2PK input: signature only
       const script = new Script()
       script.add(signature.signature.toTxFormat(signingMethod))
       this.setScript(script)
     } else {
-      // For other input types, create a basic script with signature
-      // This is a fallback for unknown input types
       const script = new Script()
       script.add(signature.signature.toTxFormat(signingMethod))
       if (signature.publicKey) {
@@ -524,23 +708,21 @@ export class Input {
   }
 
   /**
-   * Clear all signatures from this input
-   * @abstract
+   * Clear all signatures from this input.
+   * @abstract — subclasses must override.
    */
   clearSignatures(): this {
     throw new Error('Input#clearSignatures')
   }
 
   /**
-   * Validate a signature for this input
+   * Validate a signature against this input.
    */
   isValidSignature(
     transaction: Transaction,
     signature: TransactionSignature,
     signingMethod?: string,
   ): boolean {
-    // NOTE: nhashtype is now automatically synchronized via TransactionSignature setter
-    // No manual synchronization needed
     return verify(
       transaction as unknown as TransactionLike,
       signature.signature,
@@ -553,8 +735,18 @@ export class Input {
     )
   }
 
+  // -----------------------------------------------------------------------
+  // Relative lock-time setters
+  // -----------------------------------------------------------------------
+
   /**
-   * Lock input for specified seconds
+   * Lock this input for a specified number of seconds.
+   *
+   * Sets the sequence number to encode a time-based relative lock-time
+   * per BIP 68. The value is divided by the granularity (512 seconds)
+   * and the TYPE_FLAG is set.
+   *
+   * Reference: lotusd/src/consensus/tx_verify.cpp lines 106, 120-125
    */
   lockForSeconds(seconds: number): Input {
     Preconditions.checkArgument(
@@ -574,7 +766,12 @@ export class Input {
   }
 
   /**
-   * Lock input until block height difference
+   * Lock this input until a specified block-height difference.
+   *
+   * Sets the sequence number to encode a block-based relative lock-time
+   * per BIP 68.
+   *
+   * Reference: lotusd/src/consensus/tx_verify.cpp lines 126-131
    */
   lockUntilBlockHeight(heightDiff: number): Input {
     Preconditions.checkArgument(
@@ -589,7 +786,10 @@ export class Input {
   }
 
   /**
-   * Get lock time as Date or number
+   * Get the lock-time value encoded in the sequence number.
+   *
+   * Returns null if relative lock-time is disabled, otherwise returns
+   * the value in seconds (time-based) or blocks (block-based).
    */
   getLockTime(): Date | number | null {
     if (this.sequenceNumber & Input.SEQUENCE_LOCKTIME_DISABLE_FLAG) {
@@ -607,15 +807,22 @@ export class Input {
     }
   }
 
+  // -----------------------------------------------------------------------
+  // Size estimation
+  // -----------------------------------------------------------------------
+
   /**
-   * Estimate the size of this input
+   * Estimate the serialised size of this input's scriptSig.
+   * Subclasses override with type-specific estimates.
    */
   _estimateSize(): number {
     return this.toBufferWriter().toBuffer().length
   }
 
   /**
-   * String representation
+   * Human-readable string, matching CTxIn::ToString() format.
+   *
+   * Reference: lotusd/src/primitives/transaction.cpp lines 19-33
    */
   toString(): string {
     if (this.isNull()) {
@@ -626,18 +833,17 @@ export class Input {
 }
 
 /**
- * Multisig input class
+ * Multi-signature input.
  *
- * Handles multi-signature inputs where multiple signatures are required.
+ * Handles bare multisig outputs (OP_CHECKMULTISIG without P2SH wrapper).
  *
  * Size Estimation:
- * - SIGNATURE_SIZE = 73 bytes (conservative estimate for ECDSA)
- * - Schnorr signatures are smaller (65 bytes) but we use conservative estimate
- * - This ensures sufficient fees are calculated
+ * - SIGNATURE_SIZE = 73 bytes (conservative ECDSA estimate)
+ * - Schnorr signatures are 65 bytes but we use the conservative value
  */
 export class MultisigInput extends Input {
-  static readonly OPCODES_SIZE = 1 // 0
-  static readonly SIGNATURE_SIZE = 73 // size (1) + DER (<=72) - conservative for ECDSA
+  static readonly OPCODES_SIZE = 1
+  static readonly SIGNATURE_SIZE = 73
 
   publicKeys!: PublicKey[]
   threshold!: number
@@ -789,11 +995,9 @@ export class MultisigInput extends Input {
   }
 
   _updateScript(signingMethod?: string): this {
-    // Create multisig input script manually
     const script = new Script()
     script.add(Opcode.OP_0)
 
-    // Add signatures
     const signatures = this._createSignatures(signingMethod)
     for (const sig of signatures) {
       script.add(sig)
@@ -804,21 +1008,17 @@ export class MultisigInput extends Input {
   }
 
   /**
-   * Create signature buffers for multisig input
+   * Create serialised signature buffers.
    *
-   * Converts TransactionSignature objects to their serialized form:
-   * [signature bytes (DER for ECDSA or 64-byte for Schnorr)] + [1-byte sighash type]
-   *
-   * CRITICAL: Must call toDER() on the signature.signature property, not the
-   * TransactionSignature object itself.
+   * Each signature is: [DER/Schnorr bytes] + [1-byte sighash type]
    */
   _createSignatures(signingMethod?: string): Buffer[] {
     return this.signatures
       .filter(signature => signature !== undefined)
       .map(signature => {
-        return Buffer.concat([
-          signature!.signature.toDER(signingMethod), // FIXED: Call on signature.signature
-          Buffer.from([signature!.sigtype]),
+        return BufferUtil.concat([
+          signature.signature.toDER(signingMethod),
+          BufferUtil.from([signature.sigtype]),
         ])
       })
   }
@@ -855,8 +1055,6 @@ export class MultisigInput extends Input {
     signature: TransactionSignature,
     signingMethod?: string,
   ): boolean {
-    // NOTE: nhashtype is now automatically synchronized via TransactionSignature setter
-    // No manual synchronization needed
     return verify(
       transaction as unknown as TransactionLike,
       signature.signature,
@@ -926,20 +1124,21 @@ export class MultisigInput extends Input {
   }
 }
 
+// ---------------------------------------------------------------------------
+// MultisigScriptHashInput (P2SH)
+// ---------------------------------------------------------------------------
+
 /**
- * Multisig script hash input class (P2SH)
- *
- * Handles pay-to-script-hash inputs containing multisig redeem scripts.
+ * Pay-to-script-hash multisig input.
  *
  * Size Estimation:
- * - SIGNATURE_SIZE = 74 bytes (conservative estimate for ECDSA)
- * - Schnorr signatures are smaller (66 bytes with sighash) but we use conservative estimate
- * - This ensures sufficient fees are calculated
+ * - SIGNATURE_SIZE = 74 bytes (conservative ECDSA estimate)
+ * - PUBKEY_SIZE = 34 bytes
  */
 export class MultisigScriptHashInput extends Input {
-  static readonly OPCODES_SIZE = 7 // serialized size (<=3) + 0 .. N .. M OP_CHECKMULTISIG
-  static readonly SIGNATURE_SIZE = 74 // size (1) + DER (<=72) + sighash (1) - conservative for ECDSA
-  static readonly PUBKEY_SIZE = 34 // size (1) + DER (<=33)
+  static readonly OPCODES_SIZE = 7
+  static readonly SIGNATURE_SIZE = 74
+  static readonly PUBKEY_SIZE = 34
 
   publicKeys!: PublicKey[]
   threshold!: number
@@ -1099,17 +1298,14 @@ export class MultisigScriptHashInput extends Input {
   }
 
   _updateScript(signingMethod?: string, checkBitsField?: Uint8Array): this {
-    // Create P2SH multisig input script manually
     const script = new Script()
     script.add(Opcode.OP_0)
 
-    // Add signatures
     const signatures = this._createSignatures(signingMethod)
     for (const sig of signatures) {
       script.add(sig)
     }
 
-    // Add redeem script
     script.add(this.redeemScript.toBuffer())
 
     this.setScript(script)
@@ -1117,21 +1313,15 @@ export class MultisigScriptHashInput extends Input {
   }
 
   /**
-   * Create signature buffers for P2SH multisig input
-   *
-   * Converts TransactionSignature objects to their serialized form:
-   * [signature bytes (DER for ECDSA or 64-byte for Schnorr)] + [1-byte sighash type]
-   *
-   * CRITICAL: Must call toDER() on the signature.signature property, not the
-   * TransactionSignature object itself.
+   * Create serialised signature buffers for P2SH multisig.
    */
   _createSignatures(signingMethod?: string): Buffer[] {
     return this.signatures
       .filter(signature => signature !== undefined)
       .map(signature => {
-        return Buffer.concat([
-          signature!.signature.toDER(signingMethod), // FIXED: Call on signature.signature
-          Buffer.from([signature!.sigtype]),
+        return BufferUtil.concat([
+          signature!.signature.toDER(signingMethod),
+          BufferUtil.from([signature!.sigtype]),
         ])
       })
   }
@@ -1169,7 +1359,6 @@ export class MultisigScriptHashInput extends Input {
     signingMethod?: string,
   ): boolean {
     signingMethod = signingMethod || 'ecdsa'
-    // NOTE: nhashtype is now automatically synchronized via TransactionSignature setter
     return verify(
       transaction as unknown as TransactionLike,
       signature.signature,
@@ -1190,7 +1379,6 @@ export class MultisigScriptHashInput extends Input {
     publicKeys: PublicKey[],
     signingMethod?: string,
   ): TransactionSignature[] {
-    // Implementation would go here
     return []
   }
 
@@ -1203,17 +1391,18 @@ export class MultisigScriptHashInput extends Input {
   }
 }
 
+// ---------------------------------------------------------------------------
+// PublicKeyInput (P2PK)
+// ---------------------------------------------------------------------------
+
 /**
- * Public key input class (P2PK)
- *
- * Handles pay-to-public-key inputs.
+ * Pay-to-public-key input.
  *
  * Size Estimation:
- * - SCRIPT_MAX_SIZE = 73 bytes (conservative estimate for ECDSA)
- * - Schnorr signatures are smaller (65 bytes) but we use conservative estimate
+ * - SCRIPT_MAX_SIZE = 73 bytes (conservative ECDSA; Schnorr is 65)
  */
 export class PublicKeyInput extends Input {
-  static readonly SCRIPT_MAX_SIZE = 73 // sigsize (1 + 72) - conservative for ECDSA, Schnorr is 65
+  static readonly SCRIPT_MAX_SIZE = 73
 
   getSignatures(
     transaction: Transaction,
@@ -1267,7 +1456,6 @@ export class PublicKeyInput extends Input {
       'Signature is invalid',
     )
 
-    // Create P2PK input script manually
     const script = new Script()
     script.add(signature.signature.toTxFormat(signingMethod))
 
@@ -1289,17 +1477,19 @@ export class PublicKeyInput extends Input {
   }
 }
 
+// ---------------------------------------------------------------------------
+// PublicKeyHashInput (P2PKH)
+// ---------------------------------------------------------------------------
+
 /**
- * Public key hash input class (P2PKH)
- *
- * Handles pay-to-public-key-hash inputs (most common input type).
+ * Pay-to-public-key-hash input (most common input type).
  *
  * Size Estimation:
- * - SCRIPT_MAX_SIZE = 107 bytes (73 for sig + 34 for pubkey)
- * - Conservative estimate assumes ECDSA; Schnorr would be 99 bytes (65 + 34)
+ * - SCRIPT_MAX_SIZE = 107 bytes (73 sig + 34 pubkey)
+ * - Conservative; Schnorr would be 99 bytes (65 + 34)
  */
 export class PublicKeyHashInput extends Input {
-  static readonly SCRIPT_MAX_SIZE = 73 + 34 // sigsize (1 + 72) + pubkey (1 + 33) - conservative for ECDSA
+  static readonly SCRIPT_MAX_SIZE = 73 + 34
 
   getSignatures(
     transaction: Transaction,
@@ -1355,7 +1545,6 @@ export class PublicKeyHashInput extends Input {
       'Signature is invalid',
     )
 
-    // Create P2PKH input script manually
     const script = new Script()
     script.add(signature.signature.toTxFormat(signingMethod))
     script.add(signature.publicKey.toBuffer())
@@ -1378,24 +1567,18 @@ export class PublicKeyHashInput extends Input {
   }
 }
 
-/**
- * Taproot Input Implementation
- *
- * Implements Pay-To-Taproot input handling for both:
- * - Key path spending (single Schnorr signature)
- * - Script path spending (script + control block + signatures)
- *
- * Reference: lotusd/src/script/interpreter.cpp VerifyTaprootSpend()
- */
+// ---------------------------------------------------------------------------
+// TaprootInput (P2TR)
+// ---------------------------------------------------------------------------
 
 /**
- * Taproot-specific input data
+ * Taproot-specific input data.
  */
 export interface TaprootInputData extends InputData {
   /** Internal public key (before tweaking) */
-  internalPubKey?: PublicKey
+  internalPubKey: PublicKey
   /** Merkle root of script tree (for script path spending) */
-  merkleRoot?: Buffer
+  merkleRoot: Buffer
   /** Control block (for script path spending) */
   controlBlock?: Buffer
   /** Script to execute (for script path spending) */
@@ -1403,24 +1586,23 @@ export interface TaprootInputData extends InputData {
 }
 
 /**
- * TaprootInput - Handles Pay-To-Taproot inputs
+ * Pay-To-Taproot input.
  *
  * Supports two spending paths:
  *
  * 1. Key Path (default): Spend with single Schnorr signature
- *    - Requires SIGHASH_LOTUS
- *    - Requires Schnorr signature (not ECDSA)
+ *    - Requires SIGHASH_LOTUS (0x60)
  *    - Input script: <65-byte schnorr signature>
  *
  * 2. Script Path: Spend by revealing and executing a script
  *    - Requires control block proving script is in commitment
  *    - Input script: <...signatures/data> <script> <control_block>
  *
- * Reference: lotusd/src/script/interpreter.cpp lines 2074-2165
+ * Reference: lotusd/src/script/interpreter.cpp VerifyTaprootSpend()
  */
 export class TaprootInput extends Input {
   /** Internal public key (before Taproot tweaking) */
-  internalPubKey?: PublicKey
+  internalPubKey: PublicKey
 
   /** Merkle root of script tree */
   merkleRoot?: Buffer
@@ -1431,44 +1613,41 @@ export class TaprootInput extends Input {
   /** Script to execute for script path spending */
   tapScript?: Script
 
-  constructor(params?: TaprootInputData) {
+  constructor(params: TaprootInputData) {
     super(params)
 
-    if (params) {
-      this.internalPubKey = params.internalPubKey
-      this.merkleRoot = params.merkleRoot
-      this.controlBlock = params.controlBlock
-      this.tapScript = params.tapScript
-    }
+    this.internalPubKey = params.internalPubKey
+    this.merkleRoot = params.merkleRoot
+    this.controlBlock = params.controlBlock
+    this.tapScript = params.tapScript
   }
 
   /**
-   * Check if this input has a script tree (script-path spending)
+   * Check if this input has a script tree (script-path spending).
    *
-   * A script tree exists if merkleRoot is defined, has length 32, and is non-zero.
-   * Key-path-only outputs have a zero merkleRoot (32 zero bytes).
+   * A script tree exists if merkleRoot is defined, has length 32,
+   * and is non-zero.
    */
   hasScriptTree(): boolean {
     if (!this.merkleRoot || this.merkleRoot.length !== 32) {
       return false
     }
-    // Check if merkleRoot is non-zero (script tree exists)
-    return !this.merkleRoot.equals(Buffer.alloc(32))
+    return !this.merkleRoot.equals(BufferUtil.alloc(32))
   }
 
   /**
-   * Check if this input is key-path only (no script tree)
+   * Check if this input is key-path only (no script tree).
    */
   isKeyPathOnly(): boolean {
     return !this.hasScriptTree()
   }
 
   /**
-   * Get signatures for Taproot spending (key-path or script-path)
+   * Get signatures for Taproot spending.
    *
-   * Automatically detects spending path and uses appropriate sighash:
-   * - Key-path: SIGHASH_LOTUS (0x60) REQUIRED
-   * - Script-path: Any valid sighash type (FORKID or LOTUS)
+   * Automatically detects spending path:
+   * - Key-path: SIGHASH_LOTUS (0x60) REQUIRED, Schnorr only
+   * - Script-path: Any valid sighash type
    *
    * Reference: lotusd/src/script/interpreter.cpp lines 2074-2165
    */
@@ -1489,11 +1668,9 @@ export class TaprootInput extends Input {
       'Output must be Pay-To-Taproot',
     )
 
-    // Determine spending path and validate sighash type
     const isKeyPath = this.isKeyPathOnly()
 
     if (isKeyPath) {
-      // Key-path spending MUST use SIGHASH_LOTUS
       sigtype = sigtype || TAPROOT_SIGHASH_TYPE
       if ((sigtype & 0x60) !== Signature.SIGHASH_LOTUS) {
         throw new Error(
@@ -1513,8 +1690,6 @@ export class TaprootInput extends Input {
         signingMethod,
       )
     } else {
-      // Script-path spending: any valid sighash type (FORKID or LOTUS)
-      // Default to SIGHASH_FORKID for script-path
       sigtype = sigtype || Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID
       signingMethod = signingMethod || 'schnorr'
 
@@ -1529,8 +1704,12 @@ export class TaprootInput extends Input {
   }
 
   /**
-   * Get signatures for key-path spending
-   * @private
+   * Get signatures for key-path spending.
+   *
+   * The private key is tweaked with the merkle root before signing,
+   * so the signature verifies against the commitment in scriptPubKey.
+   *
+   * Reference: lotusd/src/script/interpreter.cpp VerifyTaprootSpend()
    */
   private _getKeyPathSignatures(
     transaction: Transaction,
@@ -1539,13 +1718,9 @@ export class TaprootInput extends Input {
     sigtype: number,
     signingMethod: 'ecdsa' | 'schnorr',
   ): TransactionSignature[] {
-    // Taproot key path spending ALWAYS requires tweaking the private key
-    // The signature must verify against the commitment (tweaked pubkey) in the scriptPubKey
-    // Reference: lotusd/src/script/interpreter.cpp VerifyTaprootSpend()
-    const merkleRoot = this.merkleRoot || Buffer.alloc(32)
+    const merkleRoot = this.merkleRoot || BufferUtil.alloc(32)
     const tweakedPrivateKey = tweakPrivateKey(privateKey, merkleRoot)
 
-    // Sign with tweaked key using SIGHASH_LOTUS
     const signature = sign(
       transaction as unknown as TransactionLike,
       tweakedPrivateKey,
@@ -1570,8 +1745,7 @@ export class TaprootInput extends Input {
   }
 
   /**
-   * Get signatures for script-path spending
-   * @private
+   * Get signatures for script-path spending.
    */
   private _getScriptPathSignatures(
     transaction: Transaction,
@@ -1580,8 +1754,6 @@ export class TaprootInput extends Input {
     sigtype: number,
     signingMethod: 'ecdsa' | 'schnorr',
   ): TransactionSignature[] {
-    // For script-path spending, we sign with the internal private key (not tweaked)
-    // The script execution will verify the merkle commitment
     const signature = sign(
       transaction as unknown as TransactionLike,
       privateKey,
@@ -1606,11 +1778,7 @@ export class TaprootInput extends Input {
   }
 
   /**
-   * Add signature to input (key-path or script-path spending)
-   *
-   * Automatically detects spending path and builds appropriate witness:
-   * - Key-path: witness = [signature]
-   * - Script-path: witness = [signature, script, control_block]
+   * Add signature to input (key-path or script-path).
    */
   addSignature(
     transaction: Transaction,
@@ -1624,22 +1792,15 @@ export class TaprootInput extends Input {
 
     const script = new Script()
 
-    // NOTE: nhashtype is now automatically synchronized via TransactionSignature setter
-    // No defensive measure needed - the setter ensures nhashtype is always in sync
-
     if (this.isKeyPathOnly()) {
-      // Key-path spending: input script is just the signature
       script.add(signature.signature.toTxFormat('schnorr'))
     } else {
-      // Script-path spending: input script is [signature, script, control_block]
       script.add(signature.signature.toTxFormat('schnorr'))
 
-      // Add the tapscript
       if (this.tapScript) {
         script.add(this.tapScript.toBuffer())
       }
 
-      // Add the control block
       if (this.controlBlock) {
         script.add(this.controlBlock)
       } else {
@@ -1655,7 +1816,7 @@ export class TaprootInput extends Input {
   }
 
   /**
-   * Check if signature is valid
+   * Validate a signature for this Taproot input.
    */
   isValidSignature(
     transaction: Transaction,
@@ -1684,89 +1845,78 @@ export class TaprootInput extends Input {
     )
   }
 
-  /**
-   * Clear signatures
-   */
   clearSignatures(): this {
     this.setScript(new Script())
     return this
   }
 
-  /**
-   * Check if input is fully signed
-   */
   isFullySigned(): boolean {
-    // For key path: should have 1 chunk (the signature)
-    // For script path: should have script + control block
     return this.script !== null && this.script.chunks.length > 0
   }
 
   /**
-   * Estimate size of input script
+   * Estimate size: key path = 65 bytes (64 Schnorr + 1 sighash) + 1 varint.
    */
   _estimateSize(): number {
-    // Key path: 65 bytes (64-byte Schnorr + 1-byte sighash)
-    // + varint for length (1 byte)
     return 66
   }
 }
 
+// ---------------------------------------------------------------------------
+// MuSig2TaprootInput
+// ---------------------------------------------------------------------------
+
 /**
- * MuSig2 Taproot Input
+ * MuSig2 Taproot Input.
  *
- * Specialized input type for spending Taproot outputs using MuSig2 multi-signature.
- * Coordinates multi-party signing for Taproot key path spending.
+ * Specialised input type for spending Taproot outputs using MuSig2
+ * multi-signature. Coordinates multi-party signing for Taproot key
+ * path spending.
  *
  * Multi-Party Signing Flow:
  * 1. All signers agree on message (transaction sighash)
  * 2. Round 1: Exchange public nonces
  * 3. Round 2: Exchange partial signatures
  * 4. Aggregate partial signatures into final Schnorr signature
- *
- * The final signature validates against the Taproot commitment (tweaked aggregated key).
  */
-export class MuSigTaprootInput extends TaprootInput {
+export class MuSig2TaprootInput extends TaprootInput {
   /** Key aggregation context from MuSig2 */
-  keyAggContext?: MuSigKeyAggContext
+  keyAggContext?: MuSig2KeyAggContext
 
   /** Collected public nonces from all signers */
   publicNonces?: Map<number, [Point, Point]>
 
   /** Aggregated nonce */
-  aggregatedNonce?: MuSigAggregatedNonce
+  aggregatedNonce?: MuSig2AggregatedNonce
 
   /** Collected partial signatures from all signers */
   partialSignatures?: Map<number, BN>
 
-  /** My signer index in the key aggregation */
+  /** This signer's index in the key aggregation */
   mySignerIndex?: number
 
   constructor(
-    params?: TaprootInputData & {
-      keyAggContext?: MuSigKeyAggContext
+    params: TaprootInputData & {
+      keyAggContext?: MuSig2KeyAggContext
       mySignerIndex?: number
     },
   ) {
     super(params)
 
-    if (params) {
-      this.keyAggContext = params.keyAggContext
-      this.mySignerIndex = params.mySignerIndex
-      this.publicNonces = new Map()
-      this.partialSignatures = new Map()
-    }
+    this.keyAggContext = params.keyAggContext
+    this.mySignerIndex = params.mySignerIndex
+    this.publicNonces = new Map()
+    this.partialSignatures = new Map()
   }
 
   /**
-   * Initialize MuSig2 signing session
-   *
-   * Sets up the key aggregation context for multi-party signing.
+   * Initialise MuSig2 signing session.
    *
    * @param keyAggContext - Key aggregation context from musigKeyAgg()
    * @param mySignerIndex - This signer's index in the aggregation
    */
-  initMuSigSession(
-    keyAggContext: MuSigKeyAggContext,
+  initMuSig2Session(
+    keyAggContext: MuSig2KeyAggContext,
     mySignerIndex: number,
   ): this {
     this.keyAggContext = keyAggContext
@@ -1777,7 +1927,7 @@ export class MuSigTaprootInput extends TaprootInput {
   }
 
   /**
-   * Add a public nonce from a signer
+   * Add a public nonce from a signer.
    *
    * @param signerIndex - Index of the signer
    * @param publicNonce - The signer's public nonce pair [R1, R2]
@@ -1791,7 +1941,7 @@ export class MuSigTaprootInput extends TaprootInput {
   }
 
   /**
-   * Check if all public nonces have been received
+   * Check if all public nonces have been received.
    */
   hasAllNonces(): boolean {
     if (!this.keyAggContext || !this.publicNonces) {
@@ -1802,16 +1952,13 @@ export class MuSigTaprootInput extends TaprootInput {
   }
 
   /**
-   * Aggregate all received public nonces
-   *
-   * Should be called after all signers have shared their public nonces.
+   * Aggregate all received public nonces.
    */
   aggregateNonces(): this {
     if (!this.hasAllNonces()) {
       throw new Error('Not all public nonces received')
     }
 
-    // Convert map to array in order
     const noncesArray: [Point, Point][] = []
     for (let i = 0; i < this.keyAggContext!.pubkeys.length; i++) {
       const nonce = this.publicNonces!.get(i)
@@ -1821,12 +1968,12 @@ export class MuSigTaprootInput extends TaprootInput {
       noncesArray.push(nonce)
     }
 
-    this.aggregatedNonce = musigNonceAgg(noncesArray)
+    this.aggregatedNonce = muSig2NonceAgg(noncesArray)
     return this
   }
 
   /**
-   * Add a partial signature from a signer
+   * Add a partial signature from a signer.
    *
    * @param signerIndex - Index of the signer
    * @param partialSig - The signer's partial signature
@@ -1840,7 +1987,7 @@ export class MuSigTaprootInput extends TaprootInput {
   }
 
   /**
-   * Check if all partial signatures have been received
+   * Check if all partial signatures have been received.
    */
   hasAllPartialSignatures(): boolean {
     if (!this.keyAggContext || !this.partialSignatures) {
@@ -1851,15 +1998,15 @@ export class MuSigTaprootInput extends TaprootInput {
   }
 
   /**
-   * Finalize MuSig2 signature
+   * Finalise MuSig2 signature.
    *
-   * Aggregates all partial signatures into final Schnorr signature
+   * Aggregates all partial signatures into a final Schnorr signature
    * and adds it to the input script.
    *
    * @param transaction - The transaction being signed
    * @param message - Message that was signed (sighash)
    */
-  finalizeMuSigSignature(transaction: Transaction, message: Buffer): this {
+  finalizeMuSig2Signature(transaction: Transaction, message: Buffer): this {
     if (!this.hasAllPartialSignatures()) {
       throw new Error('Not all partial signatures received')
     }
@@ -1868,10 +2015,8 @@ export class MuSigTaprootInput extends TaprootInput {
       throw new Error('Nonces must be aggregated first')
     }
 
-    // Get the commitment (tweaked aggregated key) from the output script
     const commitment = extractTaprootCommitment(this.output!.script)
 
-    // Convert partial signatures map to array
     const partialSigsArray: BN[] = []
     for (let i = 0; i < this.keyAggContext!.pubkeys.length; i++) {
       const partialSig = this.partialSignatures!.get(i)
@@ -1881,16 +2026,13 @@ export class MuSigTaprootInput extends TaprootInput {
       partialSigsArray.push(partialSig)
     }
 
-    // Aggregate partial signatures
-    // Note: Use commitment (tweaked key) for aggregation
-    const finalSignature = musigSigAgg(
+    const finalSignature = muSig2SigAgg(
       partialSigsArray,
       this.aggregatedNonce,
       message,
-      commitment, // Use commitment, not untweaked aggregated key
+      commitment,
     )
 
-    // Add signature to input script
     const script = new Script()
     script.add(finalSignature.toTxFormat('schnorr'))
 
@@ -1898,12 +2040,7 @@ export class MuSigTaprootInput extends TaprootInput {
     return this
   }
 
-  /**
-   * Check if input is fully signed
-   */
   isFullySigned(): boolean {
-    // MuSig2 input is fully signed when all partial sigs are collected
-    // and the final signature is in the script
     return (
       super.isFullySigned() ||
       (this.hasAllPartialSignatures() &&
@@ -1912,14 +2049,3 @@ export class MuSigTaprootInput extends TaprootInput {
     )
   }
 }
-
-// Add subclass constructors as input types
-Input.PublicKey = PublicKeyInput
-Input.PublicKeyHash = PublicKeyHashInput
-Input.Multisig = MultisigInput
-Input.MultisigScriptHash = MultisigScriptHashInput
-Input.Taproot = TaprootInput
-Input.MuSigTaproot = MuSigTaprootInput
-Input.P2PKH = PublicKeyHashInput
-Input.P2SH = MultisigScriptHashInput
-Input.P2TR = TaprootInput

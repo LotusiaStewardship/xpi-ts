@@ -2,20 +2,21 @@
  * PrivateKey implementation for Lotus
  * Migrated from bitcore-lib-xpi with ESM support and BigInt
  */
-
-import { BN } from './crypto/bn.js'
-import { Point } from './crypto/point.js'
-import { Random } from './crypto/random.js'
-import { Base58Check } from './encoding/base58check.js'
-import { JSUtil } from './util/js.js'
+import { BN } from './crypto/bn'
+import { Point } from './crypto/point'
+import { Random } from './crypto/random'
+import { Base58Check } from './encoding/base58check'
+import { BufferUtil } from './util/buffer'
+import { JSUtil } from './util/js'
 import {
   Network,
   get as getNetwork,
   defaultNetwork,
   type NetworkName,
-} from './networks.js'
-import { PublicKey } from './publickey.js'
-import { Address } from './address.js'
+} from './networks'
+import { PublicKey } from './publickey'
+import { Address } from './address'
+import type { Buffer } from 'buffer/'
 
 export interface PrivateKeyData {
   bn?: BN
@@ -103,7 +104,7 @@ export class PrivateKey {
       info.bn = PrivateKey._getRandomBN()
     } else if (data instanceof BN) {
       info.bn = data
-    } else if (Buffer.isBuffer(data)) {
+    } else if (BufferUtil.isBuffer(data)) {
       const bufferInfo = PrivateKey._transformBuffer(data, network)
       Object.assign(info, bufferInfo)
     } else if (
@@ -113,7 +114,7 @@ export class PrivateKey {
       'buf' in data
     ) {
       info.compressed = data.compressed
-      info.bn = new BN(data.buf, 'be')
+      info.bn = BN.fromBuffer(data.buf)
     } else if (
       typeof data === 'object' &&
       data !== null &&
@@ -127,7 +128,7 @@ export class PrivateKey {
       info.network = getNetwork(data)
     } else if (typeof data === 'string') {
       if (JSUtil.isHexa(data)) {
-        info.bn = new BN(data, 16)
+        info.bn = BN.fromString(data, 'hex')
       } else {
         const wifInfo = PrivateKey._transformWIF(data, network)
         Object.assign(info, wifInfo)
@@ -144,8 +145,7 @@ export class PrivateKey {
   private static _getRandomBN(): BN {
     let bn: BN
     do {
-      const privbuf = Random.getRandomBuffer(32)
-      bn = new BN(privbuf, 'be')
+      bn = BN.fromBuffer(Random.getRandomBuffer(32))
     } while (!bn.lt(Point.getN()))
     return bn
   }
@@ -198,7 +198,8 @@ export class PrivateKey {
       )
     }
 
-    info.bn = new BN(buf.subarray(1, 32 + 1), 'be')
+    // Extract the 32-byte private key from the WIF buffer (skip network prefix byte)
+    info.bn = BN.fromBuffer(buf.slice(1, 32 + 1))
     return info
   }
 
@@ -212,7 +213,7 @@ export class PrivateKey {
     network ||= defaultNetwork
     return {
       network: getNetwork(network),
-      bn: new BN(buf, 'be'),
+      bn: BN.fromBuffer(buf),
       compressed: true,
     }
   }
@@ -231,7 +232,7 @@ export class PrivateKey {
    * Internal function to transform a JSON string or plain object into a private key
    */
   private static _transformObject(json: PrivateKeyObject): PrivateKeyData {
-    const bn = new BN(json.bn, 16)
+    const bn = BN.fromString(json.bn, 'hex')
     const network = getNetwork(json.network)
     if (!network) {
       throw new Error(`Invalid network: ${json.network}`)
@@ -333,15 +334,15 @@ export class PrivateKey {
   toWIF(compressed: boolean = true): string {
     let buf: Buffer
     if (compressed) {
-      buf = Buffer.concat([
-        Buffer.from([this.network.privatekey]),
-        this.bn.toArrayLike(Buffer, 'be', 32),
-        Buffer.from([0x01]),
+      buf = BufferUtil.concat([
+        BufferUtil.from([this.network.privatekey]),
+        this.bn.toBuffer({ size: 32 }),
+        BufferUtil.from([0x01]),
       ])
     } else {
-      buf = Buffer.concat([
-        Buffer.from([this.network.privatekey]),
-        this.bn.toArrayLike(Buffer, 'be', 32),
+      buf = BufferUtil.concat([
+        BufferUtil.from([this.network.privatekey]),
+        this.bn.toBuffer({ size: 32 }),
       ])
     }
 
@@ -359,14 +360,14 @@ export class PrivateKey {
    * Will return the private key as a Buffer
    */
   toBuffer(): Buffer {
-    return this.bn.toArrayLike(Buffer, 'be', 32)
+    return this.bn.toBuffer({ size: 32 })
   }
 
   /**
    * Will return the private key as a Buffer without leading zero padding
    */
   toBufferNoPadding(): Buffer {
-    return this.bn.toArrayLike(Buffer, 'be')
+    return this.bn.toBuffer()
   }
 
   /**

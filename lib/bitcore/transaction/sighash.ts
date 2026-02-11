@@ -1,20 +1,20 @@
-import { Signature } from '../crypto/signature.js'
-import { Script, empty } from '../script.js'
-import { Output } from './output.js'
-import { UnspentOutput } from './unspentoutput.js'
-import { BufferReader } from '../encoding/bufferreader.js'
-import { BufferWriter } from '../encoding/bufferwriter.js'
-import { BN } from '../crypto/bn.js'
-import { Hash } from '../crypto/hash.js'
-import { ECDSA } from '../crypto/ecdsa.js'
-import { Schnorr } from '../crypto/schnorr.js'
-import { Preconditions } from '../util/preconditions.js'
-import { BufferUtil } from '../util/buffer.js'
-import { Interpreter } from '../script/interpreter.js'
-import { PrivateKey } from '../privatekey.js'
-import { PublicKey } from '../publickey.js'
-import { Transaction } from './transaction.js'
-import { Input } from './input.js'
+import { Signature } from '../crypto/signature'
+import { Script } from '../script'
+import { Output } from './output'
+import { BufferReader } from '../encoding/bufferreader'
+import { BufferWriter } from '../encoding/bufferwriter'
+import { BN } from '../crypto/bn'
+import { Hash } from '../crypto/hash'
+import { ECDSA } from '../crypto/ecdsa'
+import { Schnorr } from '../crypto/schnorr'
+import { Preconditions } from '../util/preconditions'
+import { BufferUtil } from '../util/buffer'
+import { Interpreter } from '../script/interpreter'
+import { PrivateKey } from '../privatekey'
+import { PublicKey } from '../publickey'
+import { Transaction } from './transaction'
+import { Input } from './input'
+import type { Buffer } from 'buffer/'
 
 export interface TransactionLike {
   /** This array is also used */
@@ -38,14 +38,14 @@ export interface TransactionLike {
 const SIGHASH_SINGLE_BUG_CONST =
   '0000000000000000000000000000000000000000000000000000000000000001'
 const BITS_64_ON_CONST = 'ffffffffffffffff'
-const NULL_HASH = Buffer.from(
+const NULL_HASH = BufferUtil.from(
   '0000000000000000000000000000000000000000000000000000000000000000',
   'hex',
 )
 
 // Sighash algorithm mask (bits 5-6 determine the algorithm)
-// From lotusd/src/script/sighashtype.h
-const SIGHASH_ALGORITHM_MASK = 0x60
+// From lotusd/src/script/sighashtype.h — canonical constant on Signature class
+const SIGHASH_ALGORITHM_MASK = Signature.SIGHASH_ALGORITHM_MASK
 
 // By default, we sign with sighash_forkid
 const DEFAULT_SIGN_FLAGS_CONST = 1 << 16 // SCRIPT_ENABLE_SIGHASH_FORKID
@@ -53,7 +53,7 @@ const DEFAULT_SIGN_FLAGS_CONST = 1 << 16 // SCRIPT_ENABLE_SIGHASH_FORKID
 /**
  * Get ForkId for UAHF
  */
-function GetForkId(): number {
+function getForkId(): number {
   return 0 // In the UAHF, a fork id of 0 is used (see [4] REQ-6-2 NOTE 4)
 }
 
@@ -96,7 +96,7 @@ function getMerkleRoot(hashes: Buffer[]): { root: Buffer; height: number } {
         i + 1 < currentHashes.length ? currentHashes[i + 1] : NULL_HASH
 
       // Hash the pair
-      const combined = Buffer.concat([left, right])
+      const combined = BufferUtil.concat([left, right])
       const pairHash = Hash.sha256sha256(combined)
       newHashes.push(pairHash)
     }
@@ -509,7 +509,7 @@ function sighash(
       prevTxId: txcopy.inputs[i].prevTxId,
       outputIndex: txcopy.inputs[i].outputIndex,
       sequenceNumber: txcopy.inputs[i].sequenceNumber,
-      script: empty(),
+      script: Script.empty(),
     })
   }
 
@@ -540,7 +540,7 @@ function sighash(
     // The SIGHASH_SINGLE bug.
     // https://bitcointalk.org/index.php?topic=260595.0
     if (inputNumber >= txcopy.outputs.length) {
-      return Buffer.from(SIGHASH_SINGLE_BUG_CONST, 'hex')
+      return BufferUtil.from(SIGHASH_SINGLE_BUG_CONST, 'hex')
     }
 
     // Truncate outputs to inputNumber + 1
@@ -549,8 +549,8 @@ function sighash(
     // Set outputs before inputNumber to have max value and empty script
     for (let i = 0; i < inputNumber; i++) {
       txcopy.outputs[i] = new Output({
-        satoshis: BN.fromBuffer(Buffer.from(BITS_64_ON_CONST, 'hex')),
-        script: empty(),
+        satoshis: BN.fromBuffer(BufferUtil.from(BITS_64_ON_CONST, 'hex')),
+        script: Script.empty(),
       })
     }
   }
@@ -678,8 +678,7 @@ function verify(
 
   signingMethod = signingMethod || 'ecdsa'
 
-  // NOTE: Using 'little' endian matches bitcore-lib-xpi behavior
-  // Combined with BIP143 hash reversal, this produces correct signatures
+  // Verify signature using the appropriate method
   if (signingMethod === 'schnorr') {
     return Schnorr.verify(hashbuf, signature, publicKey, 'big')
   } else if (signingMethod === 'ecdsa') {

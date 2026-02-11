@@ -9,6 +9,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert'
+import { Buffer } from 'buffer/'
 import { Block } from '../../lib/bitcore/block/block.js'
 import { BlockHeader } from '../../lib/bitcore/block/blockheader.js'
 import { BN } from '../../lib/bitcore/crypto/bn.js'
@@ -43,7 +44,8 @@ describe('Block', () => {
 
   describe('static factory methods', () => {
     it('fromBuffer should parse raw block', () => {
-      const block = Block.fromBuffer(Buffer.from(rawBlockHex, 'hex'))
+      const blockBuf = Buffer.from(rawBlockHex, 'hex')
+      const block = Block.fromBuffer(blockBuf)
       assert.strictEqual(block.hash, expectedHash)
       assert.strictEqual(block.header.height, 1000000)
       assert.strictEqual(block.transactions.length, 1)

@@ -3,16 +3,29 @@
  * Migrated from bitcore-lib-xpi with ESM support
  */
 
-import { Preconditions } from './util/preconditions.js'
-import { JSUtil } from './util/js.js'
+import { Preconditions as $ } from './util/preconditions'
+import { JSUtil, BufferUtil } from './util'
+import type { Buffer } from 'buffer/'
 
 export interface OpcodeData {
   num: number
 }
 
+/**
+ * Opcode class for Lotus script operations
+ * Represents a single opcode in the Lotus scripting language
+ * Migrated from bitcore-lib-xpi with ESM support
+ */
 export class Opcode {
+  /** The numeric value of this opcode */
   readonly num!: number
 
+  /**
+   * Create a new Opcode instance
+   * @param num - The opcode number or name string (e.g., 'OP_DUP')
+   * @throws {Error} If the opcode name is unknown
+   * @throws {TypeError} If num is not a number or string
+   */
   constructor(num: number | string) {
     if (typeof num === 'number') {
       JSUtil.defineImmutable(this, { num })
@@ -27,16 +40,30 @@ export class Opcode {
     }
   }
 
+  /**
+   * Create an Opcode from a buffer
+   * @param buf - Buffer containing the opcode byte
+   * @returns A new Opcode instance
+   * @throws {Error} If buf is not a Buffer or is empty
+   */
   static fromBuffer(buf: Buffer): Opcode {
-    Preconditions.checkArgument(Buffer.isBuffer(buf), 'buf', 'Must be a Buffer')
-    Preconditions.checkArgument(buf.length > 0, 'buf', 'Buffer cannot be empty')
+    $.checkArgument(BufferUtil.isBuffer(buf), 'buf', 'Must be a Buffer')
+    $.checkArgument(buf.length > 0, 'buf', 'Buffer cannot be empty')
     return new Opcode(buf[0])
   }
 
+  /**
+   * Convert the opcode to a buffer
+   * @returns A single-byte buffer containing the opcode number
+   */
   toBuffer(): Buffer {
-    return Buffer.from([this.num])
+    return BufferUtil.from([this.num])
   }
 
+  /**
+   * Convert the opcode to a string representation
+   * @returns The opcode number as a string
+   */
   toString(): string {
     return this.num.toString()
   }
@@ -305,6 +332,10 @@ export class Opcode {
   static readonly OP_CHECKDATASIGVERIFY = 187
   /** Reverse bytes of top stack item */
   static readonly OP_REVERSEBYTES = 188
+  /** Multiply by power of 2 */
+  static readonly OP_MULPOW2 = 189
+  /** Raw left bit shift */
+  static readonly OP_RAWLEFTBITSHIFT = 190
   // NOTE: When adding more op codes after OP_REVERSEBYTES, the lotus-lib AND lotusd
   // script interpreter classes MUST be updated to EXCLUDE the new op code from disabled
   // op code checks!
@@ -429,5 +460,7 @@ export class Opcode {
     OP_CHECKDATASIG: 186,
     OP_CHECKDATASIGVERIFY: 187,
     OP_REVERSEBYTES: 188,
+    OP_MULPOW2: 189,
+    OP_RAWLEFTBITSHIFT: 190,
   } as const
 }

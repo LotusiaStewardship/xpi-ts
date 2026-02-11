@@ -1,10 +1,11 @@
-import { Preconditions } from '../util/preconditions.js'
-import { JSUtil } from '../util/js.js'
-import { PublicKey, PublicKeyInput } from '../publickey.js'
-import { BitcoreError } from '../errors.js'
-import { Signature } from '../crypto/signature.js'
-import { BN } from '../crypto/bn.js'
-import { isSchnorrSignature } from '../crypto/sigtype.js'
+import { Preconditions } from '../util/preconditions'
+import { BufferUtil } from '../util/buffer'
+import { JSUtil } from '../util/js'
+import { PublicKey, PublicKeyInput } from '../publickey'
+import { BitcoreError } from '../errors'
+import { Signature } from '../crypto/signature'
+import { isSchnorrSignature } from '../crypto/sigtype'
+import type { Buffer } from 'buffer/'
 
 export interface TransactionSignatureData {
   publicKey: PublicKey | Buffer | string
@@ -140,9 +141,9 @@ export class TransactionSignature {
   private _fromObject(arg: TransactionSignatureData): TransactionSignature {
     this._checkObjectArgs(arg)
     this.publicKey = new PublicKey(arg.publicKey as PublicKeyInput)
-    this.prevTxId = Buffer.isBuffer(arg.prevTxId)
+    this.prevTxId = BufferUtil.isBuffer(arg.prevTxId)
       ? arg.prevTxId
-      : Buffer.from(arg.prevTxId, 'hex')
+      : BufferUtil.from(arg.prevTxId, 'hex')
     this.outputIndex = arg.outputIndex
     this.inputIndex = arg.inputIndex
 
@@ -154,13 +155,13 @@ export class TransactionSignature {
     // Parse signature with proper Schnorr/ECDSA detection
     if (arg.signature instanceof Signature) {
       this.signature = arg.signature
-    } else if (Buffer.isBuffer(arg.signature)) {
+    } else if (BufferUtil.isBuffer(arg.signature)) {
       // Detect signature type by length (64 or 65 bytes = Schnorr, else ECDSA)
       // Remove sighash byte if present for detection
       const sigWithoutSighash =
         arg.signature.length > 64 &&
         arg.signature[arg.signature.length - 1] !== 0x30
-          ? arg.signature.subarray(0, -1)
+          ? arg.signature.slice(0, -1)
           : arg.signature
 
       if (isSchnorrSignature(sigWithoutSighash)) {
@@ -176,11 +177,9 @@ export class TransactionSignature {
       }
     } else {
       // Parse from hex string
-      const buf = Buffer.from(arg.signature, 'hex')
+      const buf = BufferUtil.from(arg.signature, 'hex')
       const sigWithoutSighash =
-        buf.length > 64 && buf[buf.length - 1] !== 0x30
-          ? buf.subarray(0, -1)
-          : buf
+        buf.length > 64 && buf[buf.length - 1] !== 0x30 ? buf.slice(0, -1) : buf
 
       if (isSchnorrSignature(sigWithoutSighash)) {
         // Parse as Schnorr signature (64 or 65 bytes)
@@ -235,12 +234,12 @@ export class TransactionSignature {
     )
     Preconditions.checkState(
       arg.signature instanceof Signature ||
-        Buffer.isBuffer(arg.signature) ||
+        BufferUtil.isBuffer(arg.signature) ||
         JSUtil.isHexa(arg.signature),
       'signature must be a buffer or hexa value',
     )
     Preconditions.checkState(
-      Buffer.isBuffer(arg.prevTxId) || JSUtil.isHexa(arg.prevTxId),
+      BufferUtil.isBuffer(arg.prevTxId) || JSUtil.isHexa(arg.prevTxId),
       'prevTxId must be a buffer or hexa value',
     )
     Preconditions.checkArgument(
@@ -289,7 +288,7 @@ export class TransactionSignature {
   clone(): TransactionSignature {
     return new TransactionSignature({
       publicKey: this.publicKey,
-      prevTxId: Buffer.from(this.prevTxId),
+      prevTxId: BufferUtil.from(this.prevTxId),
       outputIndex: this.outputIndex,
       inputIndex: this.inputIndex,
       signature: this.signature,

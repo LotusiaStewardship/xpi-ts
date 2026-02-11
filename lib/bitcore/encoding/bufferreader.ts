@@ -1,31 +1,39 @@
-/**
- * Buffer reader utility module
- * Migrated from bitcore-lib-xpi with ESM support and TypeScript
- */
-
-import { Preconditions } from '../util/preconditions.js'
-import { BN } from '../crypto/bn.js'
-import { BufferUtil } from '../util/buffer.js'
+import { Preconditions } from '../util/preconditions'
+import { BN } from '../crypto/bn'
+import { BufferUtil } from '../util/buffer'
+import type { Buffer } from 'buffer/'
 
 export interface BufferReaderData {
   buf?: Buffer
   pos?: number
 }
 
+/**
+ * BufferReader class for reading binary data from a buffer
+ * Provides methods to read various data types in different byte orders
+ * Migrated from bitcore-lib-xpi with ESM support and TypeScript
+ */
 export class BufferReader {
+  /** The underlying buffer being read */
   buf!: Buffer
+  /** Current position in the buffer */
   pos: number = 0
 
+  /**
+   * Create a new BufferReader instance
+   * @param buf - Buffer, hex string, or BufferReaderData object to read from
+   * @throws {TypeError} If the argument is not a valid buffer, hex string, or object
+   */
   constructor(buf?: Buffer | string | BufferReaderData) {
     if (buf === undefined) {
       return
     }
-    if (Buffer.isBuffer(buf)) {
+    if (BufferUtil.isBuffer(buf)) {
       this.set({
         buf: buf,
       })
     } else if (typeof buf === 'string') {
-      const b = Buffer.from(buf, 'hex')
+      const b = BufferUtil.from(buf, 'hex')
       if (b.length * 2 !== buf.length) {
         throw new TypeError('Invalid hex string')
       }
@@ -41,25 +49,48 @@ export class BufferReader {
     }
   }
 
-  // Factory function to allow calling BufferReader() without 'new'
+  /**
+   * Factory function to create a BufferReader without using 'new'
+   * @param buf - Buffer, hex string, or BufferReaderData object to read from
+   * @returns A new BufferReader instance
+   */
   static create(buf?: Buffer | string | BufferReaderData): BufferReader {
     return new BufferReader(buf)
   }
 
+  /**
+   * Set the buffer and position from a BufferReaderData object
+   * @param obj - Object containing buf and/or pos properties
+   * @returns This BufferReader instance for chaining
+   */
   set(obj: BufferReaderData): BufferReader {
     this.buf = obj.buf || this.buf || undefined
     this.pos = obj.pos || this.pos || 0
     return this
   }
 
+  /**
+   * Check if the reader has reached the end of the buffer
+   * @returns True if position is at or past the end of the buffer
+   */
   eof(): boolean {
     return this.pos >= this.buf.length
   }
 
+  /**
+   * Alias for eof() - check if reading is finished
+   * @returns True if position is at or past the end of the buffer
+   */
   finished(): boolean {
     return this.eof()
   }
 
+  /**
+   * Read a specified number of bytes from the buffer
+   * @param len - Number of bytes to read
+   * @returns Buffer containing the read bytes
+   * @throws {Error} If len is undefined
+   */
   read(len: number): Buffer {
     Preconditions.checkArgument(
       len !== undefined,
@@ -71,48 +102,80 @@ export class BufferReader {
     return buf
   }
 
+  /**
+   * Read all remaining bytes from the buffer
+   * @returns Buffer containing all remaining bytes
+   */
   readAll(): Buffer {
     const buf = this.buf.slice(this.pos, this.buf.length)
     this.pos = this.buf.length
     return buf
   }
 
+  /**
+   * Read an unsigned 8-bit integer
+   * @returns The unsigned 8-bit integer value
+   */
   readUInt8(): number {
     const val = this.buf.readUInt8(this.pos)
     this.pos = this.pos + 1
     return val
   }
 
+  /**
+   * Read an unsigned 16-bit integer in big-endian format
+   * @returns The unsigned 16-bit integer value
+   */
   readUInt16BE(): number {
     const val = this.buf.readUInt16BE(this.pos)
     this.pos = this.pos + 2
     return val
   }
 
+  /**
+   * Read an unsigned 16-bit integer in little-endian format
+   * @returns The unsigned 16-bit integer value
+   */
   readUInt16LE(): number {
     const val = this.buf.readUInt16LE(this.pos)
     this.pos = this.pos + 2
     return val
   }
 
+  /**
+   * Read an unsigned 32-bit integer in big-endian format
+   * @returns The unsigned 32-bit integer value
+   */
   readUInt32BE(): number {
     const val = this.buf.readUInt32BE(this.pos)
     this.pos = this.pos + 4
     return val
   }
 
+  /**
+   * Read an unsigned 32-bit integer in little-endian format
+   * @returns The unsigned 32-bit integer value
+   */
   readUInt32LE(): number {
     const val = this.buf.readUInt32LE(this.pos)
     this.pos = this.pos + 4
     return val
   }
 
+  /**
+   * Read an unsigned 48-bit integer in little-endian format
+   * @returns The unsigned 48-bit integer value
+   */
   readUInt48LE(): number {
     const val = this.buf.readUIntLE(this.pos, 6)
     this.pos = this.pos + 6
     return val
   }
 
+  /**
+   * Read an unsigned 56-bit integer in little-endian format as a BN
+   * @returns BN instance containing the 56-bit value
+   */
   readUInt56LEBN(): BN {
     const buf = this.buf.slice(this.pos, this.pos + 7)
     const bn = BN.fromBuffer(buf, { endian: 'little' })
@@ -120,12 +183,20 @@ export class BufferReader {
     return bn
   }
 
+  /**
+   * Read a signed 32-bit integer in little-endian format
+   * @returns The signed 32-bit integer value
+   */
   readInt32LE(): number {
     const val = this.buf.readInt32LE(this.pos)
     this.pos = this.pos + 4
     return val
   }
 
+  /**
+   * Read an unsigned 64-bit integer in big-endian format as a BN
+   * @returns BN instance containing the 64-bit value
+   */
   readUInt64BEBN(): BN {
     const buf = this.buf.slice(this.pos, this.pos + 8)
     const bn = BN.fromBuffer(buf)
@@ -133,6 +204,11 @@ export class BufferReader {
     return bn
   }
 
+  /**
+   * Read an unsigned 64-bit integer in little-endian format as a BN
+   * Uses optimized path for values that fit in JavaScript's safe integer range
+   * @returns BN instance containing the 64-bit value
+   */
   readUInt64LEBN(): BN {
     const second = this.buf.readUInt32LE(this.pos)
     const first = this.buf.readUInt32LE(this.pos + 4)
@@ -148,18 +224,27 @@ export class BufferReader {
       bn = new BN(combined)
     } else {
       const data = Array.prototype.slice.call(this.buf, this.pos, this.pos + 8)
-      bn = new BN(Buffer.from(data), 'le')
+      bn = new BN(BufferUtil.from(data), 'le')
     }
     this.pos = this.pos + 8
     return bn
   }
 
+  /**
+   * Read an unsigned 32-bit integer in little-endian format as a BN
+   * @returns BN instance containing the 32-bit value
+   */
   readUInt32LEBN(): BN {
     const value = this.buf.readUInt32LE(this.pos)
     this.pos = this.pos + 4
     return new BN(value)
   }
 
+  /**
+   * Read a variable-length integer (varint) as a number
+   * @returns The varint value as a number
+   * @throws {Error} If the value is too large to retain precision as a number
+   */
   readVarintNum(): number {
     const first = this.readUInt8()
     switch (first) {
@@ -184,7 +269,9 @@ export class BufferReader {
   }
 
   /**
-   * reads a length prepended buffer
+   * Read a length-prepended buffer where the length is encoded as a varint
+   * @returns Buffer containing the data
+   * @throws {Error} If the read buffer length doesn't match the expected length
    */
   readVarLengthBuffer(): Buffer {
     const len = this.readVarintNum()
@@ -200,6 +287,10 @@ export class BufferReader {
     return buf
   }
 
+  /**
+   * Read a varint as a raw buffer including the prefix byte
+   * @returns Buffer containing the varint bytes
+   */
   readVarintBuf(): Buffer {
     const first = this.buf.readUInt8(this.pos)
     switch (first) {
@@ -214,6 +305,10 @@ export class BufferReader {
     }
   }
 
+  /**
+   * Read a variable-length integer (varint) as a BN
+   * @returns BN instance containing the varint value
+   */
   readVarintBN(): BN {
     const first = this.readUInt8()
     switch (first) {
@@ -228,8 +323,12 @@ export class BufferReader {
     }
   }
 
+  /**
+   * Reverse the entire buffer in place
+   * @returns This BufferReader instance for chaining
+   */
   reverse(): BufferReader {
-    const buf = Buffer.alloc(this.buf.length)
+    const buf = BufferUtil.alloc(this.buf.length)
     for (let i = 0; i < buf.length; i++) {
       buf[i] = this.buf[this.buf.length - 1 - i]
     }
@@ -237,6 +336,11 @@ export class BufferReader {
     return this
   }
 
+  /**
+   * Read bytes and return them in reversed order
+   * @param len - Number of bytes to read (defaults to remaining buffer length)
+   * @returns Buffer containing the read bytes in reversed order
+   */
   readReverse(len?: number): Buffer {
     if (len === undefined) {
       len = this.buf.length

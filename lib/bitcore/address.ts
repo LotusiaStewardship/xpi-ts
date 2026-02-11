@@ -2,21 +2,22 @@
  * Address implementation
  * Migrated from bitcore-lib-xpi with ESM support and TypeScript
  */
-
-import { Preconditions } from './util/preconditions.js'
-import { BitcoreError } from './errors.js'
-import { Base58Check } from './encoding/base58check.js'
+import { Preconditions as $ } from './util/preconditions'
+import { BitcoreError } from './errors'
+import { Base58Check } from './encoding/base58check'
 import {
   Network,
   get as getNetwork,
   defaultNetwork,
   type NetworkName,
-} from './networks.js'
-import { Hash } from './crypto/hash.js'
-import { JSUtil } from './util/js.js'
-import { PublicKey } from './publickey.js'
-import { XAddress } from './xaddress.js'
-import { Script } from './script.js'
+} from './networks'
+import { Hash } from './crypto/hash'
+import { JSUtil, BufferUtil } from './util'
+import { PublicKey } from './publickey'
+import { XAddress } from './xaddress'
+import { Script } from './script'
+import type { Buffer } from 'buffer/'
+import { Opcode } from './opcode'
 
 export interface AddressData {
   hashBuffer?: Buffer
@@ -65,7 +66,7 @@ export class Address {
       return data
     }
 
-    Preconditions.checkArgument(
+    $.checkArgument(
       data !== undefined,
       'data',
       'First argument is required, please include address data.',
@@ -129,22 +130,22 @@ export class Address {
 
     // transform and validate input data
     if (
-      (Buffer.isBuffer(data) || data instanceof Uint8Array) &&
+      (BufferUtil.isBuffer(data) || data instanceof Uint8Array) &&
       data.length === 20
     ) {
       return Address._transformHash(data)
     } else if (
-      (Buffer.isBuffer(data) || data instanceof Uint8Array) &&
+      (BufferUtil.isBuffer(data) || data instanceof Uint8Array) &&
       data.length === 21
     ) {
       return Address._transformBuffer(data, network, type)
     } else if (
-      (Buffer.isBuffer(data) || data instanceof Uint8Array) &&
+      (BufferUtil.isBuffer(data) || data instanceof Uint8Array) &&
       data.length === 33
     ) {
       // 33-byte buffer is a Taproot commitment
       return {
-        hashBuffer: Buffer.from(data),
+        hashBuffer: BufferUtil.from(data),
         network: typeof network === 'string' ? getNetwork(network)! : network,
         type: type || Address.PayToTaproot,
       }
@@ -221,7 +222,7 @@ export class Address {
         throw new TypeError('Address has mismatched network type.')
       }
       return {
-        hashBuffer: Buffer.from(info.hashBuffer!),
+        hashBuffer: BufferUtil.from(info.hashBuffer!),
         network: info.network,
         type: info.type,
       }
@@ -266,7 +267,7 @@ export class Address {
       throw new TypeError('Address has invalid version.')
     }
 
-    info.hashBuffer = decoded.subarray(1)
+    info.hashBuffer = decoded.slice(1)
     info.network = version.network
     info.type = version.type
 
@@ -317,12 +318,12 @@ export class Address {
       // XAddress might store full script (36 bytes) or just commitment (33 bytes)
       if (
         hashBuffer!.length === 36 &&
-        hashBuffer[0] === 0x62 && // OP_SCRIPTTYPE
-        hashBuffer[1] === 0x51 && // OP_1
-        hashBuffer[2] === 0x21
+        hashBuffer[0] === Opcode.OP_SCRIPTTYPE && // OP_SCRIPTTYPE
+        hashBuffer[1] === Opcode.OP_1 && // OP_1
+        hashBuffer[2] === 0x21 // push 33 bytes
       ) {
         // Full P2TR script stored - extract commitment
-        hashBuffer = hashBuffer.subarray(3, 36)
+        hashBuffer = hashBuffer.slice(3, 36)
       } else if (hashBuffer!.length === 33) {
         // Just the commitment - use as is
         // hashBuffer is already correct
@@ -342,22 +343,22 @@ export class Address {
     // If the stored buffer is a P2PKH script, extract the hash from it
     if (
       hashBuffer!.length === 25 &&
-      hashBuffer[0] === 0x76 &&
-      hashBuffer[1] === 0xa9 &&
+      hashBuffer[0] === Opcode.OP_DUP &&
+      hashBuffer[1] === Opcode.OP_HASH160 &&
       hashBuffer[2] === 0x14
     ) {
       // P2PKH script: OP_DUP OP_HASH160 OP_PUSH20 <20-byte-hash> OP_EQUALVERIFY OP_CHECKSIG
-      hashBuffer = hashBuffer.subarray(3, 23) // Extract the 20-byte hash (skip push byte)
+      hashBuffer = hashBuffer.slice(3, 23) // Extract the 20-byte hash (skip push byte)
     }
     // If the stored buffer is a P2SH script, extract the hash from it
     else if (
       hashBuffer.length === 23 &&
-      hashBuffer[0] === 0xa9 &&
+      hashBuffer[0] === Opcode.OP_HASH160 &&
       hashBuffer[1] === 0x14 &&
-      hashBuffer[22] === 0x87
+      hashBuffer[22] === Opcode.OP_EQUAL
     ) {
       // P2SH script: OP_HASH160 OP_PUSH20 <20-byte-hash> OP_EQUAL
-      hashBuffer = hashBuffer.subarray(2, 22) // Extract the 20-byte hash (skip push byte)
+      hashBuffer = hashBuffer.slice(2, 22) // Extract the 20-byte hash (skip push byte)
       return {
         hashBuffer: hashBuffer,
         network: decodedNetwork,
@@ -377,13 +378,13 @@ export class Address {
    */
   private static _transformHash(hash: Buffer | Uint8Array): AddressData {
     const info: AddressData = {}
-    if (!Buffer.isBuffer(hash) && !(hash instanceof Uint8Array)) {
+    if (!BufferUtil.isBuffer(hash)) {
       throw new TypeError('Address supplied is not a buffer.')
     }
     if (hash.length !== 20) {
       throw new TypeError('Address hashbuffers must be exactly 20 bytes.')
     }
-    info.hashBuffer = Buffer.from(hash)
+    info.hashBuffer = BufferUtil.from(hash)
     return info
   }
 
@@ -396,7 +397,7 @@ export class Address {
     type?: string,
   ): AddressData {
     const info: AddressData = {}
-    if (!Buffer.isBuffer(buffer) && !(buffer instanceof Uint8Array)) {
+    if (!BufferUtil.isBuffer(buffer)) {
       throw new TypeError('Address supplied is not a buffer.')
     }
     if (buffer.length !== 21) {
@@ -404,7 +405,7 @@ export class Address {
     }
 
     const networkObj = getNetwork(network!)
-    const bufferVersion = Address._classifyFromVersion(Buffer.from(buffer))
+    const bufferVersion = Address._classifyFromVersion(BufferUtil.from(buffer))
 
     if (network && !networkObj) {
       throw new TypeError('Unknown network')
@@ -421,7 +422,7 @@ export class Address {
       throw new TypeError('Address has mismatched type.')
     }
 
-    info.hashBuffer = Buffer.from(buffer).subarray(1)
+    info.hashBuffer = BufferUtil.from(buffer).slice(1)
     info.network = bufferVersion.network
     info.type = bufferVersion.type
     return info
@@ -451,7 +452,7 @@ export class Address {
     script: Script,
     network?: Network | NetworkName,
   ): AddressData {
-    Preconditions.checkArgument(
+    $.checkArgument(
       script instanceof Script,
       'script',
       'script must be a Script instance',
@@ -480,19 +481,19 @@ export class Address {
    * Deserializes an address serialized through `Address#toObject()`
    */
   private static _transformObject(data: AddressData): AddressData {
-    Preconditions.checkArgument(
+    $.checkArgument(
       data.hashBuffer !== undefined,
       'data',
       'Must provide a `hash` or `hashBuffer` property',
     )
-    Preconditions.checkArgument(
+    $.checkArgument(
       data.type !== undefined,
       'data',
       'Must provide a `type` property',
     )
     return {
       hashBuffer:
-        data.hashBuffer || Buffer.from(data.hashBuffer!.toString(), 'hex'),
+        data.hashBuffer || BufferUtil.from(data.hashBuffer!.toString(), 'hex'),
       network: getNetwork(data.network!) || defaultNetwork,
       type: data.type,
     }
@@ -599,11 +600,11 @@ export class Address {
    * Create address from object
    */
   static fromObject(obj: AddressObject): Address {
-    Preconditions.checkState(
+    $.checkState(
       JSUtil.isHexa(obj.hash),
       'Unexpected hash property, "' + obj.hash + '", expected to be hex.',
     )
-    const hashBuffer = Buffer.from(obj.hash, 'hex')
+    const hashBuffer = BufferUtil.from(obj.hash, 'hex')
     return new Address(hashBuffer, obj.network, obj.type)
   }
 
@@ -613,7 +614,7 @@ export class Address {
    * or p2sh output.
    */
   static fromScript(script: Script, network?: Network | NetworkName): Address {
-    Preconditions.checkArgument(
+    $.checkArgument(
       script instanceof Script,
       'script',
       'script must be a Script instance',
@@ -627,8 +628,8 @@ export class Address {
    * use that to create the address.
    */
   static payingTo(script: Script, network?: Network | NetworkName): Address {
-    Preconditions.checkArgument(script !== null, 'script', 'script is required')
-    Preconditions.checkArgument(
+    $.checkArgument(script !== null, 'script', 'script is required')
+    $.checkArgument(
       script instanceof Script,
       'script',
       'script must be instance of Script',
@@ -699,10 +700,10 @@ export class Address {
    * Will return a full buffer representation of the address (version + hash)
    */
   toFullBuffer(): Buffer {
-    const version = Buffer.from([
+    const version = BufferUtil.from([
       this.network[this.type as keyof Network] as number,
     ])
-    const buf = Buffer.concat([version, this.hashBuffer])
+    const buf = BufferUtil.concat([version, this.hashBuffer])
     return buf
   }
 
@@ -734,7 +735,7 @@ export class Address {
    */
   toString(network?: Network | NetworkName): string {
     /* const version = this.network[this.type as keyof Network] as number
-    const payload = Buffer.concat([Buffer.from([version]), this.hashBuffer])
+    const payload = BufferUtil.concat([BufferUtil.from([version]), this.hashBuffer])
     return Base58Check.encode(payload) */
     return this.toXAddress(network)
   }

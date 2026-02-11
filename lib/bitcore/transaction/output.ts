@@ -1,3 +1,5 @@
+import type { Buffer } from 'buffer/'
+import { BN } from '../crypto/bn.js'
 import { Preconditions } from '../util/preconditions.js'
 import { BitcoreError } from '../errors.js'
 import { BufferWriter } from '../encoding/bufferwriter.js'
@@ -5,7 +7,7 @@ import { BufferReader } from '../encoding/bufferreader.js'
 import { BufferUtil } from '../util/buffer.js'
 import { JSUtil } from '../util/js.js'
 import { Script } from '../script.js'
-import { BN } from '../crypto/bn.js'
+import { Opcode } from '../opcode.js'
 
 const MAX_SAFE_INTEGER = 0x1fffffffffffff
 
@@ -42,14 +44,14 @@ export class Output {
       }
 
       // Handle script - match reference logic
-      if (Buffer.isBuffer(args.script)) {
+      if (BufferUtil.isBuffer(args.script)) {
         this._scriptBuffer = args.script
       } else if (args.scriptBuffer !== undefined) {
         this._scriptBuffer = args.scriptBuffer
       } else if (args.script !== undefined) {
         this.setScript(args.script)
       } else {
-        this._scriptBuffer = Buffer.alloc(0)
+        this._scriptBuffer = BufferUtil.alloc(0)
       }
     } else {
       throw new TypeError('Unrecognized argument for Output')
@@ -161,7 +163,7 @@ export class Output {
       this._script = Script.fromString(script)
       this._scriptBuffer = this._script.toBuffer()
       ;(this._script as Script & { _isOutput?: boolean })._isOutput = true
-    } else if (Buffer.isBuffer(script)) {
+    } else if (BufferUtil.isBuffer(script)) {
       this.setScriptFromBuffer(script)
     } else {
       throw new TypeError('Invalid argument type: script')
@@ -191,7 +193,7 @@ export class Output {
   isValid(): boolean {
     return (
       this.satoshis >= 0 &&
-      this.satoshis <= 21000000 * 1000000 && // Max 21M XPI
+      this.satoshis <= 21000000 * 1000000 && // Max 21M XPI per output
       this._scriptBuffer.length > 0
     )
   }
@@ -230,7 +232,7 @@ export class Output {
     return !!(
       this._script &&
       this._script.chunks.length > 0 &&
-      this._script.chunks[0].opcodenum === 0x6a
+      this._script.chunks[0].opcodenum === Opcode.OP_RETURN
     )
   }
 
@@ -275,7 +277,7 @@ export class Output {
     if (size !== 0) {
       obj.script = br.read(size)
     } else {
-      obj.script = Buffer.from([])
+      obj.script = BufferUtil.from([])
     }
     return new Output(obj)
   }

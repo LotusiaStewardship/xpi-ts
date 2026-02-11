@@ -3,6 +3,8 @@
  * Github: https://github.com/LotusiaStewardship
  * License: MIT
  */
+import { Buffer } from 'buffer/'
+
 /**
  * Validate a sha256 hash
  * @param str - The sha256 hash to validate

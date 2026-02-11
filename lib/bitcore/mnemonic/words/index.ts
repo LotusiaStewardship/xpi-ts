@@ -4,13 +4,13 @@
  */
 
 import { english } from './english.js'
+import { french } from './french.js'
 
-// For now, we'll only include English word list
-// Other language word lists can be added later if needed
+// Word lists by language code
 export const Words = {
   ENGLISH: english,
+  FRENCH: french,
   // CHINESE: chinese,
-  // FRENCH: french,
   // ITALIAN: italian,
   // JAPANESE: japanese,
   // KOREAN: korean,

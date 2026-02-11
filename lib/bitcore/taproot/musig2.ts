@@ -1,5 +1,5 @@
 /**
- * Copyright 2025 The Lotusia Stewardship
+ * Copyright 2025-2026 The Lotusia Stewardship
  * Github: https://github.com/LotusiaStewardship
  * License: MIT
  */
@@ -20,22 +20,23 @@
  * @module TaprootMuSig
  */
 
-import { PublicKey } from '../publickey.js'
-import { PrivateKey } from '../privatekey.js'
-import { Address } from '../address.js'
-import { Script } from '../script.js'
-import { type NetworkName } from '../networks.js'
-import { BN, Point, Hash } from '../crypto/index.js'
+import { PublicKey } from '../publickey'
+import { PrivateKey } from '../privatekey'
+import { Address } from '../address'
+import { Script } from '../script'
+import { type NetworkName } from '../networks'
+import { BufferUtil } from '../util/buffer'
+import { BN, Point, Hash } from '../crypto/index'
 import {
-  musigKeyAgg,
-  musigPartialSign,
-  musigPartialSigVerify,
-  type MuSigKeyAggContext,
-  type MuSigNonce,
-  type MuSigAggregatedNonce,
-  musigTaggedHash,
-  MUSIG_TAG_NONCE_COEFF,
-} from '../crypto/musig2.js'
+  MUSIG2_TAG_NONCE_COEFF,
+  muSig2KeyAgg,
+  muSig2PartialSign,
+  muSig2PartialSigVerify,
+  muSig2TaggedHash,
+  type MuSig2KeyAggContext,
+  type MuSig2Nonce,
+  type MuSig2AggregatedNonce,
+} from '../crypto/musig2'
 import {
   buildKeyPathTaproot,
   buildScriptPathTaproot,
@@ -45,11 +46,12 @@ import {
   type TapNode,
   type TapLeaf,
 } from '../script/taproot'
+import type { Buffer } from 'buffer/'
 
 /**
  * Result of MuSig2 Taproot key creation
  */
-export interface MuSigTaprootKeyResult {
+export interface MuSig2TaprootKeyResult {
   /** Aggregated public key (before Taproot tweak) */
   aggregatedPubKey: PublicKey
 
@@ -60,7 +62,7 @@ export interface MuSigTaprootKeyResult {
   script: Script
 
   /** Key aggregation context (needed for signing) */
-  keyAggContext: MuSigKeyAggContext
+  keyAggContext: MuSig2KeyAggContext
 
   /** Merkle root (if using script tree) */
   merkleRoot: Buffer
@@ -102,15 +104,15 @@ export interface MuSigTaprootKeyResult {
  * // Use result.keyAggContext when signing
  * ```
  */
-export function buildMuSigTaprootKey(
+export function buildMuSig2TaprootKey(
   signerPubKeys: PublicKey[],
-): MuSigTaprootKeyResult {
+): MuSig2TaprootKeyResult {
   // Step 1: Aggregate signer public keys
-  const keyAggContext = musigKeyAgg(signerPubKeys)
+  const keyAggContext = muSig2KeyAgg(signerPubKeys)
   const aggregatedPubKey = keyAggContext.aggregatedPubKey
 
   // Step 2: For key-path only, merkle root is all zeros
-  const merkleRoot = Buffer.alloc(32)
+  const merkleRoot = BufferUtil.alloc(32)
 
   // Step 3: Compute Taproot tweak
   const tweak = calculateTapTweak(aggregatedPubKey, merkleRoot)
@@ -166,13 +168,13 @@ export function buildMuSigTaprootKey(
  * // Fallback: Use timelock script path
  * ```
  */
-export function buildMuSigTaprootKeyWithScripts(
+export function buildMuSig2TaprootKeyWithScripts(
   signerPubKeys: PublicKey[],
   scriptTree: TapNode,
-  state?: Buffer,
-): MuSigTaprootKeyResult & { leaves: TapLeaf[] } {
+  state: Buffer,
+): MuSig2TaprootKeyResult & { leaves: TapLeaf[] } {
   // Step 1: Aggregate signer public keys
-  const keyAggContext = musigKeyAgg(signerPubKeys)
+  const keyAggContext = muSig2KeyAgg(signerPubKeys)
   const aggregatedPubKey = keyAggContext.aggregatedPubKey
 
   // Step 2: Build script tree
@@ -220,11 +222,11 @@ export function buildMuSigTaprootKeyWithScripts(
  * @returns Partial signature for Taproot spending
  */
 export function signTaprootKeyPathWithMuSig2(
-  secretNonce: MuSigNonce,
+  secretNonce: MuSig2Nonce,
   privateKey: PrivateKey,
-  keyAggContext: MuSigKeyAggContext,
+  keyAggContext: MuSig2KeyAggContext,
   signerIndex: number,
-  aggregatedNonce: MuSigAggregatedNonce,
+  aggregatedNonce: MuSig2AggregatedNonce,
   message: Buffer,
   tweak: Buffer,
 ): BN {
@@ -235,13 +237,13 @@ export function signTaprootKeyPathWithMuSig2(
 
   // For Taproot, we need to use commitment in BOTH the nonce coefficient AND challenge hash
   // Create a modified context with commitment for consistent computation
-  const modifiedKeyAggContext: MuSigKeyAggContext = {
+  const modifiedKeyAggContext: MuSig2KeyAggContext = {
     ...keyAggContext,
     aggregatedPubKey: commitment,
   }
 
   // Compute normal partial signature using commitment in both nonce coefficient and challenge hash
-  const partialSig = musigPartialSign(
+  const partialSig = muSig2PartialSign(
     secretNonce,
     privateKey,
     modifiedKeyAggContext,
@@ -260,25 +262,28 @@ export function signTaprootKeyPathWithMuSig2(
     // Recompute challenge e with commitment
     const { R1, R2 } = aggregatedNonce
 
-    const nonceCoefData = Buffer.concat([
+    const nonceCoefData = BufferUtil.concat([
       commitment.toBuffer(), // Use commitment!
       Point.pointToCompressed(R1),
       Point.pointToCompressed(R2),
       message,
     ])
-    const b = new BN(
-      musigTaggedHash(MUSIG_TAG_NONCE_COEFF, nonceCoefData),
-      'be',
+    const b = BN.fromBuffer(
+      muSig2TaggedHash(MUSIG2_TAG_NONCE_COEFF, nonceCoefData),
     )
 
     const R = R1.add(R2.mul(b))
-    const R_x = R.getX().toArrayLike(Buffer, 'be', 32)
+    const R_x = R.x.toBuffer({ size: 32 })
     const commitment_compressed = Point.pointToCompressed(commitment.point)
-    const challengeData = Buffer.concat([R_x, commitment_compressed, message])
-    const e = new BN(Hash.sha256(challengeData), 'be').umod(n)
+    const challengeData = BufferUtil.concat([
+      R_x,
+      commitment_compressed,
+      message,
+    ])
+    const e = BN.fromBuffer(Hash.sha256(challengeData)).umod(n)
 
     // Add e·t
-    const tweakBN = new BN(tweak, 'be').umod(n)
+    const tweakBN = BN.fromBuffer(tweak).umod(n)
     const tweakTerm = e.mul(tweakBN).umod(n)
 
     return partialSig.add(tweakTerm).umod(n)
@@ -307,9 +312,9 @@ export function verifyTaprootKeyPathMuSigPartial(
   partialSig: BN,
   publicNonce: [Point, Point],
   publicKey: PublicKey,
-  keyAggContext: MuSigKeyAggContext,
+  keyAggContext: MuSig2KeyAggContext,
   signerIndex: number,
-  aggregatedNonce: MuSigAggregatedNonce,
+  aggregatedNonce: MuSig2AggregatedNonce,
   message: Buffer,
   tweak: Buffer,
 ): boolean {
@@ -319,7 +324,7 @@ export function verifyTaprootKeyPathMuSigPartial(
   const commitment = keyAggContext.aggregatedPubKey.addScalar(tweak)
 
   // Modified context with commitment for consistent verification
-  const modifiedKeyAggContext: MuSigKeyAggContext = {
+  const modifiedKeyAggContext: MuSig2KeyAggContext = {
     ...keyAggContext,
     aggregatedPubKey: commitment,
   }
@@ -331,30 +336,33 @@ export function verifyTaprootKeyPathMuSigPartial(
     // Recompute challenge e with commitment
     const { R1, R2 } = aggregatedNonce
 
-    const nonceCoefData = Buffer.concat([
+    const nonceCoefData = BufferUtil.concat([
       commitment.toBuffer(),
       Point.pointToCompressed(R1),
       Point.pointToCompressed(R2),
       message,
     ])
-    const b = new BN(
-      musigTaggedHash(MUSIG_TAG_NONCE_COEFF, nonceCoefData),
-      'be',
+    const b = BN.fromBuffer(
+      muSig2TaggedHash(MUSIG2_TAG_NONCE_COEFF, nonceCoefData),
     )
 
     const R = R1.add(R2.mul(b))
-    const R_x = R.getX().toArrayLike(Buffer, 'be', 32)
+    const R_x = R.x.toBuffer({ size: 32 })
     const commitment_compressed = Point.pointToCompressed(commitment.point)
-    const challengeData = Buffer.concat([R_x, commitment_compressed, message])
-    const e = new BN(Hash.sha256(challengeData), 'be').umod(n)
+    const challengeData = BufferUtil.concat([
+      R_x,
+      commitment_compressed,
+      message,
+    ])
+    const e = BN.fromBuffer(Hash.sha256(challengeData)).umod(n)
 
     // Subtract e·t from partial signature
-    const tweakBN = new BN(tweak, 'be').umod(n)
+    const tweakBN = BN.fromBuffer(tweak).umod(n)
     const tweakTerm = e.mul(tweakBN).umod(n)
     adjustedPartialSig = partialSig.sub(tweakTerm).umod(n)
   }
 
-  return musigPartialSigVerify(
+  return muSig2PartialSigVerify(
     adjustedPartialSig,
     publicNonce,
     publicKey,
@@ -394,7 +402,7 @@ export function createMuSigTaprootAddress(
   address: Address
   script: Script
   commitment: PublicKey
-  keyAggContext: MuSigKeyAggContext
+  keyAggContext: MuSig2KeyAggContext
 } {
   if (signerPubKeys.length === 0) {
     throw new Error('At least one signer public key is required')
@@ -410,7 +418,7 @@ export function createMuSigTaprootAddress(
       `Public key network mismatch at index ${mismatchedKeyIndex}: expected '${inferredNetwork}', got '${signerPubKeys[mismatchedKeyIndex].network.name}'`,
     )
   }
-  const result = buildMuSigTaprootKey(signerPubKeys)
+  const result = buildMuSig2TaprootKey(signerPubKeys)
   const address = Address.fromTaprootCommitment(
     result.commitment,
     inferredNetwork,
