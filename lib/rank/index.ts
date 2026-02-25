@@ -452,20 +452,21 @@ export function toScriptRNKC({
   comment,
 }: {
   platform: ScriptChunkPlatformUTF8
-  profileId: string
+  profileId?: string
   postId?: string
   comment: string
 }): Buffer[] {
-  // validate platform and profileId
-  if (!platform || !profileId) {
-    throw new Error('Must specify platform and profileId')
+  // validate platform
+  if (!platform) {
+    throw new Error('Must specify platform')
   }
   const platformSpec = PlatformConfiguration.get(platform)
   if (!platformSpec || !platformSpec.profileId) {
     throw new Error('No platform profileId specification defined')
   }
-  // validate profileId
-  if (!platformSpec.profileId.regex.test(profileId)) {
+
+  // validate profileId if provided
+  if (profileId && !platformSpec.profileId.regex.test(profileId)) {
     throw new Error(`Invalid profileId: ${profileId}`)
   }
   // validate postId, if available
@@ -486,15 +487,18 @@ export function toScriptRNKC({
   let scriptRNKC = OP_RETURN + toHex(4) + LOKAD_PREFIX
   // Append the push op and platform byte
   scriptRNKC += toHex(1) + toHex(toPlatformBuf(platform)!)
-  // Append the push op for profileId length
-  scriptRNKC += toHex(platformSpec.profileId.len)
-  // Append the padded profileId
-  scriptRNKC += toHex(toProfileIdBuf(platform, profileId)!)
-  // Append the postId, if available
-  if (postId) {
-    // Append the push op for postId length
-    scriptRNKC += toHex(platformSpec.postId.len)
-    scriptRNKC += toHex(toPostIdBuf(platform, postId)!)
+  // Append the profileId, if available (for replies to profiles/posts)
+  if (profileId) {
+    // Append the push op for profileId length
+    scriptRNKC += toHex(platformSpec.profileId.len)
+    // Append the padded profileId
+    scriptRNKC += toHex(toProfileIdBuf(platform, profileId)!)
+    // Append the postId, if available (for replies to specific posts)
+    if (postId) {
+      // Append the push op for postId length
+      scriptRNKC += toHex(platformSpec.postId.len)
+      scriptRNKC += toHex(toPostIdBuf(platform, postId)!)
+    }
   }
   scriptBufs.push(Buffer.from(scriptRNKC, 'hex'))
 
@@ -622,7 +626,7 @@ export class ScriptProcessor {
 
   /**
    * Process the profileId chunk
-   * @returns The profileId value or undefined if invalid
+   * @returns The profileId value or undefined if not present or invalid
    */
   private processProfileId(
     platform: ScriptChunkPlatformUTF8,
@@ -638,16 +642,24 @@ export class ScriptProcessor {
     }
 
     const profileIdSpec = platformSpec.profileId
+
+    // Check if we have enough bytes for profileId
+    // If the script is too short, profileId was not included
+    if (this.script.length < chunk.offset + profileIdSpec.len) {
+      return undefined
+    }
+
     const profileIdBuf = this.script.slice(
       chunk.offset,
       chunk.offset + profileIdSpec.len,
     )
 
-    // profileId chunk must be padded to required length
-    if (profileIdBuf.length < profileIdSpec.len) {
+    // Validate the profileId length
+    if (profileIdBuf.length !== profileIdSpec.len) {
       return undefined
     }
 
+    // Convert the profileId to the appropriate format
     switch (platform) {
       case 'lotusia':
         return toHex(profileIdBuf)
