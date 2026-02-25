@@ -49,15 +49,14 @@ export interface BNWrapperOptions {
  * Migrated from bitcore-lib-xpi with ESM support
  */
 class BNWrapper {
-  private _bn: BN
-
-  // Static constants to match reference
   /** The number zero (0) */
   static readonly Zero = new BNWrapper(0)
   /** The number one (1) */
   static readonly One = new BNWrapper(1)
   /** The number negative one (-1) */
   static readonly Minus1 = new BNWrapper(-1)
+  /** The underlying BN.js instance */
+  private _bn: BN
 
   /**
    * Create a new BNWrapper instance
