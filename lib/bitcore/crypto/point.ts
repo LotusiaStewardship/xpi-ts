@@ -3,12 +3,12 @@
  * Migrated from bitcore-lib-xpi with ESM support
  */
 
-import elliptic from 'elliptic'
+import { ec, type curve } from 'elliptic'
 import { BN } from './bn'
 import { BufferUtil } from '../util'
 import type { Buffer } from 'buffer/'
 
-const ecInstance = new elliptic.ec('secp256k1')
+const ecInstance = new ec('secp256k1')
 const ecPoint = ecInstance.curve.point.bind(ecInstance.curve)
 const ecPointFromX = ecInstance.curve.pointFromX.bind(ecInstance.curve)
 
@@ -18,7 +18,7 @@ export const PREFIX_Y_ODD = 0x03
 export const PREFIX_Y_EVEN = 0x02
 
 export class Point {
-  private _point: elliptic.curve.base.BasePoint
+  private _point: curve.base.BasePoint
 
   /** Buffer containing prefix byte for compressed point with odd Y-coordinate */
   static readonly PrefixOddY = BufferUtil.from([PREFIX_Y_ODD])

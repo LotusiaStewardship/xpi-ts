@@ -4,7 +4,7 @@
  * Migrated from bitcore-lib-xpi with ESM support
  */
 
-import BN from 'bn.js'
+import { BN } from 'bn.js'
 import { BufferUtil } from '../util'
 import type { Buffer } from 'buffer/'
 
@@ -12,6 +12,12 @@ export interface BNWrapperOptions {
   endian?: 'little' | 'big'
   size?: number
 }
+
+/**
+ * Type alias for BN.js instance type
+ * Used for type annotations throughout the codebase
+ */
+type BN = InstanceType<typeof BN>
 
 /**
  * BN (Big Number) wrapper class

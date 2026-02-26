@@ -19,13 +19,13 @@
     "declaration": false,
     "declarationMap": false,
     "removeComments": true,
-    "esModuleInterop": true,
+    "esModuleInterop": false,
     "allowJs": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "target": "ES2022",
     "lib": ["ES2023", "DOM"]
   }
