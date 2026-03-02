@@ -230,8 +230,8 @@ export const PlatformConfiguration: Map<
 > = new Map()
 PlatformConfiguration.set('lotusia', {
   profileId: {
-    len: 20, // 20-byte P2PKH address
-    regex: /^[0-9a-fA-F]{40}$/,
+    len: 33, // 33-byte P2TR commitment (also supports 20-byte P2PKH for backward compatibility)
+    regex: /^[0-9a-fA-F]{40,66}$/, // 20 bytes (P2PKH) or 33 bytes (P2TR)
   },
   postId: {
     len: 32, // 32-byte sha256 hash
@@ -277,23 +277,34 @@ export function toProfileIdBuf(
   if (profileIdSpec.regex && !profileIdSpec.regex.test(profileId)) {
     return null
   }
-  const profileBuf = Buffer.alloc(profileIdSpec.len)
+
   switch (platform) {
     case 'lotusia': {
       const profileIdHex = Buffer.from(profileId, 'hex')
-      profileIdHex.copy(profileBuf, profileIdSpec.len - profileIdHex.length)
-      break
+      const actualLen = profileIdHex.length
+
+      // Support both P2PKH (20 bytes) and P2TR (33 bytes)
+      if (actualLen !== 20 && actualLen !== 33) {
+        return null
+      }
+
+      // Use the actual length of the scriptPayload, not the max length
+      // P2PKH: 20 bytes, P2TR: 33 bytes
+      const profileBuf = Buffer.alloc(actualLen)
+      profileIdHex.copy(profileBuf, 0)
+      return profileBuf
     }
-    case 'twitter':
+    case 'twitter': {
+      const profileBuf = Buffer.alloc(profileIdSpec.len)
       Buffer.from(profileId, 'utf8').copy(
         profileBuf,
         profileIdSpec.len - profileId.length,
       )
-      break
+      return profileBuf
+    }
     default:
       return null
   }
-  return profileBuf
 }
 /**
  * Convert the `OP_RETURN` profile name back to UTF-8 with null bytes removed
@@ -415,10 +426,11 @@ export function toScriptRANK(
   }
   // Append the push op and platform byte
   script += toHex(1) + toHex(toPlatformBuf(platform)!)
-  // Append the push op for profileId length
-  script += toHex(platformSpec.profileId.len)
-  // Append the padded profileId
-  script += toHex(toProfileIdBuf(platform, profileId)!) // push profileId
+  // Append the push op for profileId length (variable: 20 for P2PKH, 33 for P2TR)
+  const profileIdBuf = toProfileIdBuf(platform, profileId)!
+  script += toHex(profileIdBuf.length)
+  // Append the profileId
+  script += toHex(profileIdBuf)
   // If postId is provided, append the postId according to the platform specification
   if (postId) {
     if (!platformSpec.postId) {
@@ -486,10 +498,11 @@ export function toScriptRNKC({
   let scriptRNKC = OP_RETURN + toHex(4) + LOKAD_PREFIX
   // Append the push op and platform byte
   scriptRNKC += toHex(1) + toHex(toPlatformBuf(platform)!)
-  // Append the push op for profileId length
-  scriptRNKC += toHex(platformSpec.profileId.len)
-  // Append the padded profileId
-  scriptRNKC += toHex(toProfileIdBuf(platform, profileId)!)
+  // Append the push op for profileId length (variable: 20 for P2PKH, 33 for P2TR)
+  const profileIdBuf = toProfileIdBuf(platform, profileId)!
+  scriptRNKC += toHex(profileIdBuf.length)
+  // Append the profileId
+  scriptRNKC += toHex(profileIdBuf)
   // Append the postId, if available
   if (postId) {
     // Append the push op for postId length
@@ -637,14 +650,25 @@ export class ScriptProcessor {
       return undefined
     }
 
-    const profileIdSpec = platformSpec.profileId
+    // Read the actual length from the push opcode byte (1 byte before chunk.offset)
+    const pushOpOffset = chunk.offset - 1
+    if (pushOpOffset < 0 || pushOpOffset >= this.script.length) {
+      return undefined
+    }
+    const actualLen = this.script.readUInt8(pushOpOffset)
+
+    // For Lotusia platform, support both P2PKH (20 bytes) and P2TR (33 bytes)
+    if (platform === 'lotusia' && actualLen !== 20 && actualLen !== 33) {
+      return undefined
+    }
+
     const profileIdBuf = this.script.slice(
       chunk.offset,
-      chunk.offset + profileIdSpec.len,
+      chunk.offset + actualLen,
     )
 
-    // profileId chunk must be padded to required length
-    if (profileIdBuf.length < profileIdSpec.len) {
+    // Validate buffer length matches push opcode
+    if (profileIdBuf.length !== actualLen) {
       return undefined
     }
 
@@ -677,9 +701,19 @@ export class ScriptProcessor {
       return undefined
     }
 
-    // Calculate postId offset: profileId offset + profileId length + push opcode (1 byte)
+    // Read the actual profileId length from the push opcode byte
+    const profileIdPushOpOffset = profileIdChunk.offset - 1
+    if (
+      profileIdPushOpOffset < 0 ||
+      profileIdPushOpOffset >= this.script.length
+    ) {
+      return undefined
+    }
+    const actualProfileIdLen = this.script.readUInt8(profileIdPushOpOffset)
+
+    // Calculate postId offset: profileId offset + actual profileId length + push opcode (1 byte)
     const postIdSpec = platformSpec.postId
-    const postIdOffset = profileIdChunk.offset + platformSpec.profileId.len + 1
+    const postIdOffset = profileIdChunk.offset + actualProfileIdLen + 1
     const postIdBuf = this.script.slice(
       postIdOffset,
       postIdOffset + postIdSpec.len,
