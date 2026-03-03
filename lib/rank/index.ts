@@ -714,6 +714,23 @@ export class ScriptProcessor {
     // Calculate postId offset: profileId offset + actual profileId length + push opcode (1 byte)
     const postIdSpec = platformSpec.postId
     const postIdOffset = profileIdChunk.offset + actualProfileIdLen + 1
+
+    // Validate that the script has enough data for the postId
+    // If not, this is a top-level post without a postId (not a reply)
+    if (postIdOffset + postIdSpec.len > this.script.length) {
+      return undefined
+    }
+
+    // Also validate that there's a push opcode at the expected position
+    const postIdPushOpOffset = postIdOffset - 1
+    if (postIdPushOpOffset >= this.script.length) {
+      return undefined
+    }
+    const postIdPushOp = this.script.readUInt8(postIdPushOpOffset)
+    if (postIdPushOp !== postIdSpec.len) {
+      return undefined
+    }
+
     const postIdBuf = this.script.slice(
       postIdOffset,
       postIdOffset + postIdSpec.len,
