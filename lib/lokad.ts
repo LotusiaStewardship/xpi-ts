@@ -4,7 +4,7 @@
  * License: MIT
  */
 import type { Buffer } from 'buffer/'
-import { BufferUtil, Opcode, Script } from './bitcore'
+import { BufferUtil, Chunk, Opcode, Script } from './bitcore'
 import {
   MAX_OP_RETURN_DATA,
   RNKC_MIN_DATA_LENGTH,
@@ -17,15 +17,15 @@ import { toHex } from '../utils/string'
 // ==============================================
 /** LOKAD protocol identifiers as UTF-8 strings */
 export type ScriptChunkLokadUTF8 = 'RANK' | 'RNKC' | 'RNKE'
-/** Platform identifiers as UTF-8 strings */
+/** RANK/RNKC platform identifiers as UTF-8 strings */
 export type ScriptChunkPlatformUTF8 = 'lotusia' | 'twitter'
-/** Sentiment values as UTF-8 strings */
+/** RANK sentiment values as UTF-8 strings */
 export type ScriptChunkSentimentUTF8 = 'positive' | 'negative' | 'neutral'
-/** Map of LOKAD byte values to UTF-8 protocol identifiers */
+/** Map of LOKAD integer values to UTF-8 protocol identifiers */
 export type ScriptChunkLokadMap = Map<number, ScriptChunkLokadUTF8>
-/** Map of platform byte values to UTF-8 platform identifiers */
+/** Map of platform integer values to UTF-8 platform identifiers */
 export type ScriptChunkPlatformMap = Map<number, ScriptChunkPlatformUTF8>
-/** Map of sentiment byte values to UTF-8 sentiment identifiers */
+/** Map of sentiment integer values to UTF-8 sentiment identifiers */
 export type ScriptChunkSentimentMap = Map<number, ScriptChunkSentimentUTF8>
 export type ScriptChunkField =
   | 'sentiment'
@@ -450,6 +450,147 @@ export function toCommentUTF8(
 }
 
 /**
+ * Check if a script chunk contains a valid LOKAD identifier
+ * @param scriptChunk - The script chunk to validate
+ * @param lokadType - Optional specific LOKAD type to validate against
+ * @returns `true` if the chunk contains a valid 4-byte LOKAD identifier, `false` otherwise
+ */
+export function isValidLokad(
+  scriptChunk: Chunk,
+  lokadType?: ScriptChunkLokadUTF8,
+): boolean {
+  let result =
+    scriptChunk.buf !== undefined &&
+    scriptChunk.buf.length === 4 &&
+    SCRIPT_CHUNK_LOKAD.has(scriptChunk.buf.readUInt32BE(0))
+
+  if (lokadType) {
+    result =
+      result &&
+      scriptChunk.buf !== undefined &&
+      SCRIPT_CHUNK_LOKAD.get(scriptChunk.buf?.readUInt32BE(0)) === lokadType
+  }
+
+  return result
+}
+
+/**
+ * Parse a RANK script buffer into a structured TransactionOutputRANK object
+ *
+ * Decodes the RANK protocol script format:
+ * OP_RETURN <RANK> <sentiment> <platform> <profileId> [<postId>]
+ *
+ * @param scriptBuf - The script buffer or hex string to parse
+ * @returns The parsed RANK transaction output data
+ * @throws Error if the script is not a valid OP_RETURN
+ * @throws Error if the LOKAD identifier is invalid or not RANK
+ * @throws Error if sentiment, platform, or profileId chunks are invalid
+ * @throws Error if profileId doesn't match the platform's regex pattern
+ * @throws Error if postId is present but invalid for the platform
+ *
+ * @example
+ * ```typescript
+ * const rankData = fromScriptRANK(scriptBuffer)
+ * console.log(rankData.sentiment) // 'positive'
+ * console.log(rankData.platform)  // 'lotusia'
+ * console.log(rankData.profileId) // '0x...'
+ * console.log(rankData.postId)    // optional
+ * ```
+ */
+export function fromScriptRANK(
+  scriptBuf: Buffer | string,
+): TransactionOutputRANK {
+  const script =
+    typeof scriptBuf === 'string'
+      ? Script.fromString(scriptBuf)
+      : Script.fromBuffer(scriptBuf)
+
+  // make sure script is OP_RETURN
+  if (!script.isDataOut()) {
+    throw new Error('Script is not OP_RETURN')
+  }
+
+  // process LOKAD chunk
+  if (!isValidLokad(script.chunks[1], 'RANK')) {
+    throw new Error('LOKAD chunk is either invalid or unsupported')
+  }
+
+  // process sentiment chunk
+  const sentiment = SCRIPT_CHUNK_SENTIMENT.get(script.chunks[2].opcodenum)
+  if (!sentiment) {
+    throw new Error('Invalid sentiment chunk')
+  }
+
+  // process platform chunk
+  const platform = SCRIPT_CHUNK_PLATFORM.get(
+    script.chunks[3].buf?.readUInt8(0) as number,
+  )
+  if (!platform) {
+    throw new Error('Invalid platform chunk')
+  }
+
+  const platformSpec = PlatformConfiguration.get(platform)
+  if (!platformSpec) {
+    throw new Error('Invalid platform spec')
+  }
+
+  const profileIdChunk = script.chunks[4]
+  if (
+    profileIdChunk.buf === undefined ||
+    profileIdChunk.buf.length !== platformSpec.profileId.len
+  ) {
+    throw new Error(
+      `Invalid profileId chunk (profileId chunk missing or length does not match platform ${platform})`,
+    )
+  }
+  const profileId = toProfileIdUTF8(profileIdChunk.buf)
+
+  // validate profileId regex
+  if (!platformSpec.profileId.regex.test(profileId)) {
+    throw new Error(
+      `Invalid profileId "${profileId}" (regex does not match for platform ${platform})`,
+    )
+  }
+
+  // Set up return data structure for required chunks
+  const data: TransactionOutputRANK = {
+    sentiment,
+    platform,
+    profileId,
+  }
+
+  // if we have optional chunks, process them
+  if (script.chunks.length > 5) {
+    // next chunk is postId
+    const postIdChunk = script.chunks[5]
+    if (postIdChunk.buf === undefined) {
+      throw new Error('Invalid postId chunk (postId chunk missing)')
+    }
+
+    // Convert postId based on platform type
+    if (platformSpec.postId?.type === 'BigInt') {
+      // For platforms like twitter that use BigInt post IDs
+      data.postId = postIdChunk.buf.readBigUInt64BE(0).toString()
+    } else {
+      // For platforms like lotusia that use hex string post IDs
+      data.postId = postIdChunk.buf.toString('hex')
+    }
+
+    // Validate postId against platform regex if specified
+    if (
+      platformSpec.postId?.regex &&
+      !platformSpec.postId.regex.test(data.postId)
+    ) {
+      throw new Error(
+        `Invalid postId "${data.postId}" (regex does not match for platform ${platform})`,
+      )
+    }
+  }
+
+  return data
+}
+
+/**
  * Create a hex-encoded RANK script from the given parameters
  *
  * The RANK script follows the format:
@@ -511,6 +652,144 @@ export function toScriptRANK(
     script.add(toPostIdBuf(platform, postId)!)
   }
   return script.toBuffer()
+}
+
+/**
+ * Parse a RNKC script buffer into a structured TransactionOutputRNKC object
+ *
+ * Decodes the RNKC protocol script format:
+ * OP_RETURN <RNKC> <platform> <profileId> [<postId>]
+ * OP_RETURN <comment_data_part1>
+ * [OP_RETURN <comment_data_part2>]
+ *
+ * @param scriptBuf - The main RNKC script buffer or hex string (output index 0)
+ * @param supplementalScriptBufs - Additional OP_RETURN scripts containing comment data
+ * @param burnedSats - The amount of satoshis burned for this transaction
+ * @param options - Optional validation parameters
+ * @param options.minDataLength - Minimum required comment data length (default: RNKC_MIN_DATA_LENGTH)
+ * @param options.minFeeRate - Minimum required fee rate per byte (default: RNKC_MIN_FEE_RATE)
+ * @returns The parsed RNKC transaction output data
+ * @throws Error if the script is not a valid OP_RETURN
+ * @throws Error if the LOKAD chunk is invalid or unsupported
+ * @throws Error if the platform is invalid or unsupported
+ * @throws Error if the profileId format is invalid for the platform
+ * @throws Error if the postId format is invalid for the platform
+ * @throws Error if no comment data is found in supplemental scripts
+ * @throws Error if comment data length is below minimum
+ * @throws Error if fee rate is too low
+ */
+export function fromScriptRNKC(
+  scriptBuf: Buffer | string,
+  supplementalScriptBufs: (Buffer | string)[],
+  burnedSats: number | bigint,
+  options?: { minDataLength: number; minFeeRate: number },
+): TransactionOutputRNKC {
+  // Parse the main RNKC script
+  const script =
+    typeof scriptBuf === 'string'
+      ? Script.fromString(scriptBuf)
+      : Script.fromBuffer(scriptBuf)
+
+  // Validate script is OP_RETURN
+  if (!script.isDataOut()) {
+    throw new Error('Script is not OP_RETURN')
+  }
+
+  // Validate LOKAD identifier is RNKC
+  if (!isValidLokad(script.chunks[1], 'RNKC')) {
+    throw new Error('LOKAD chunk is either invalid or unsupported')
+  }
+
+  // Parse supplemental scripts containing comment data
+  const supplementalScripts = supplementalScriptBufs.map(s =>
+    typeof s === 'string' ? Script.fromString(s) : Script.fromBuffer(s),
+  )
+
+  // Extract and validate platform from chunk 2
+  const platform = SCRIPT_CHUNK_PLATFORM.get(
+    script.chunks[2].buf?.readUInt8(0) as number,
+  )
+  if (!platform) {
+    throw new Error('Invalid platform chunk')
+  }
+
+  const platformSpec = PlatformConfiguration.get(platform)
+  if (!platformSpec) {
+    throw new Error('Platform configuration not found')
+  }
+
+  // Extract and validate profileId from chunk 3
+  const profileIdChunk = script.chunks[3]
+  if (!profileIdChunk?.buf) {
+    throw new Error('Invalid profileId chunk')
+  }
+  const profileId = toProfileIdUTF8(profileIdChunk.buf)
+  if (!platformSpec.profileId.regex.test(profileId)) {
+    throw new Error('Invalid profileId format for platform')
+  }
+
+  // Extract and validate optional postId from chunk 4
+  let postId: string | undefined
+  if (script.chunks.length > 4 && script.chunks[4]?.buf) {
+    if (!platformSpec.postId) {
+      throw new Error('Post ID found but platform does not support post IDs')
+    }
+    postId = script.chunks[4].buf.toString('utf8')
+    if (!platformSpec.postId.regex.test(postId)) {
+      throw new Error('Invalid postId format for platform')
+    }
+  }
+
+  // Concatenate comment data from supplemental OP_RETURN scripts
+  let commentBuf: Buffer = BufferUtil.alloc(0)
+  for (const supplementalScript of supplementalScripts) {
+    if (!supplementalScript.isDataOut()) {
+      break
+    }
+    const chunks = supplementalScript.chunks
+    if (chunks.length < 2 || !chunks[1]?.buf) {
+      break
+    }
+    commentBuf = BufferUtil.concat([commentBuf, chunks[1].buf])
+  }
+
+  if (commentBuf.length === 0) {
+    throw new Error('No comment data found in supplemental scripts')
+  }
+
+  // Validate comment data length against minimum requirements
+  const minDataLength = options?.minDataLength ?? RNKC_MIN_DATA_LENGTH
+  const minFeeRate = options?.minFeeRate ?? RNKC_MIN_FEE_RATE
+
+  if (commentBuf.length < minDataLength) {
+    throw new Error(
+      `Comment data length ${commentBuf.length} is below minimum ${minDataLength}`,
+    )
+  }
+
+  // Validate fee rate meets minimum requirement
+  const burnedSatsNum =
+    typeof burnedSats === 'bigint' ? Number(burnedSats) : burnedSats
+  if (burnedSatsNum < minFeeRate * commentBuf.length) {
+    throw new Error(
+      `Fee rate too low: ${Math.floor(burnedSatsNum / commentBuf.length)} < ${minFeeRate}`,
+    )
+  }
+
+  // Construct and return the parsed RNKC output
+  const result: TransactionOutputRNKC = {
+    data: new Uint8Array(commentBuf),
+    feeRate: Math.floor(burnedSatsNum / commentBuf.length),
+    inReplyToPlatform: platform,
+    inReplyToProfileId: profileId,
+    inReplyToPostId: postId,
+  }
+
+  if (!result) {
+    throw new Error('Failed to process RNKC script')
+  }
+
+  return result
 }
 
 /**
@@ -601,7 +880,6 @@ export function toScriptRNKC({
   if (postId) {
     script0.add(toPostIdBuf(platform, postId)!)
   }
-  console.log(script0.toASM())
   // Add the RNKC header script to the array
   scriptBufs.push(script0.toBuffer())
 
@@ -625,6 +903,7 @@ export function toScriptRNKC({
 /**
  * Processor for defined LOKAD protocols (RANK, RNKC, etc.)
  * @param script - The script to process, as a `Buffer`
+ * @deprecated Use the individual LOKAD `from` functions instead (e.g. `fromScriptRANK`, `fromScriptRNKC`, etc.)
  */
 export class ScriptProcessor {
   private chunks: Map<ScriptChunkField, ScriptChunk> | null = null
