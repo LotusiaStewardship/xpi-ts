@@ -1632,6 +1632,8 @@ export class TaprootInput extends Input {
     if (!this.merkleRoot || this.merkleRoot.length !== 32) {
       return false
     }
+
+    // 32-byte buffer of 0's is for key-path only
     return !this.merkleRoot.equals(BufferUtil.alloc(32))
   }
 
