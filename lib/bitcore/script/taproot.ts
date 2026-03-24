@@ -867,7 +867,8 @@ export function verifyTaprootSpend(
   const scriptPubkeyBuf = scriptPubkey.toBuffer()
   if (scriptPubkeyBuf.length === TAPROOT_SIZE_WITH_STATE) {
     const state = extractTaprootState(scriptPubkey)
-    if (state) {
+    // make sure we also validate the state size
+    if (state && state.length === SHA256_HASH_SIZE) {
       newStack.push(state)
     }
   }
