@@ -1434,7 +1434,14 @@ export class Script {
 
   /**
    * Check if this script is valid
-   * @returns True if script is valid
+   *
+   * A script is considered valid if:
+   * - All chunks have a defined opcodenum
+   * - Any chunk with a data buffer has consistent length metadata
+   *
+   * Note: Empty scripts are considered valid (e.g., for OP_0 or unspendable outputs)
+   *
+   * @returns True if script is valid, false otherwise
    */
   isValid(): boolean {
     try {
@@ -1456,6 +1463,8 @@ export class Script {
           return false
         }
       }
+
+      // all chunks processed successfully
       return true
     } catch (e) {
       return false

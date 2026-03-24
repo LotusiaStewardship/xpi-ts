@@ -47,6 +47,36 @@ export interface SchnorrData {
   verified?: boolean
 }
 
+/**
+ * Schnorr signature implementation for Lotus (BCH-derived)
+ *
+ * This class implements the custom Schnorr signature scheme used by Lotus,
+ * which is different from BIP340 (Bitcoin Taproot).
+ *
+ * Key Features:
+ * - Uses compressed public key (33 bytes) instead of x-only (32 bytes)
+ * - Hash construction: e = Hash(R.x || compressed(P) || m)
+ * - Verification equation: R = s*G - e*P
+ * - Checks that R.y is a quadratic residue (Jacobi symbol = 1)
+ *
+ * Signature Format:
+ * - 64 bytes total: [R.x (32 bytes) || s (32 bytes)]
+ * - No sighash byte appended to raw signature
+ *
+ * @example
+ * ```typescript
+ * // Sign a message hash
+ * const schnorr = new Schnorr({ privkey, hashbuf })
+ * schnorr.sign()
+ *
+ * // Verify a signature
+ * const isValid = Schnorr.verify(hashbuf, sig, pubkey)
+ *
+ * // Instance-based verification
+ * const schnorr = new Schnorr({ privkey, hashbuf })
+ * schnorr.set({ sig, pubkey }).verify().verified
+ * ```
+ */
 export class Schnorr {
   /** 32-byte hash buffer to sign or verify */
   hashbuf!: Buffer
@@ -220,7 +250,8 @@ export class Schnorr {
       ),
     )
 
-    const s = e0.mul(d).add(k).mod(n)
+    // Compute s = k + e*d (matches lotusd schnorr_impl.h:167-168)
+    const s = k.add(e0.mul(d)).mod(n)
 
     return { r, s, compressed: this.pubkey.compressed, isSchnorr: true }
   }
@@ -240,23 +271,6 @@ export class Schnorr {
   private getrBuffer(r: BN): Buffer {
     const buf = r.toBuffer()
     return buf.length < 32 ? r.toBuffer({ size: 32 }) : buf
-  }
-
-  /**
-   * Ensure s part of signature is at least 32 bytes
-   *
-   * The BN type naturally cuts off leading zeros, e.g.
-   * <BN: 4f92d8094f710bc11b93935ac157730dda26c5c2a856650dbd8ebcd730d2d4> 31 bytes
-   * Buffer <00 4f 92 d8 09 4f 71 0b c1 1b 93 93 5a c1 57 73 0d da 26 c5 c2 a8 56 65 0d bd 8e bc d7 30 d2 d4> 32 bytes
-   * Both types are equal, however Schnorr signatures must be a minimum of 64 bytes.
-   * This ensures the s component is always 32 bytes for proper signature formatting.
-   *
-   * @param s - The s value as BN
-   * @returns Buffer representation (at least 32 bytes, big-endian)
-   */
-  private getsBuffer(s: BN): Buffer {
-    const buf = s.toBuffer()
-    return buf.length < 32 ? s.toBuffer({ size: 32 }) : buf
   }
 
   /**
@@ -406,6 +420,8 @@ export class Schnorr {
       if (k.gt(BN.Zero) && k.lt(Point.getN())) {
         break
       }
+      // RFC6979 3.2.h retry: K = HMAC(K, V || 0x00), V = HMAC(K, V)
+      // Reference: lotusd hash_impl.h:256-262
       K = Hash.sha256hmac(
         BufferUtil.concat([V, BufferUtil.from('00', 'hex')]),
         K,

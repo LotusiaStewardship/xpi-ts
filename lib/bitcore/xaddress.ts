@@ -436,6 +436,15 @@ export class XAddress {
   }
 }
 
+/**
+ * Creates a checksum for an XAddress by hashing the concatenated components.
+ *
+ * @param prefix - The address prefix (e.g., 'lotus').
+ * @param networkChar - The network character ('_' for livenet, 'T' for testnet, 'R' for regtest).
+ * @param typeByte - A Buffer containing the type byte (0 for P2PKH, 1 for P2SH, 2 for P2TR).
+ * @param payload - The payload buffer (typically a hash of the public key or script).
+ * @returns A 4-byte Buffer containing the checksum.
+ */
 function createChecksum(
   prefix: string,
   networkChar: string,
@@ -552,6 +561,18 @@ function encodePayload(
   return Base58.encode(buf)
 }
 
+/**
+ * Decodes an XAddress string into its component parts.
+ *
+ * @param address - The XAddress string to decode (e.g., 'lotus_16PSJLk9W86KAZp26YcEkCBdNM6ce...')
+ * @returns An XAddressData object containing the decoded components:
+ *   - hashBuffer: The payload hash (typically a public key hash or script hash)
+ *   - network: The Network object corresponding to the address
+ *   - type: The address type ('pubkeyhash', 'scripthash', or 'taproot')
+ *   - prefix: The address prefix (e.g., 'lotus')
+ * @throws Error if the checksum is invalid
+ * @throws Error if the type byte is invalid
+ */
 function decode(address: string): XAddressData {
   const match = /[A-Z]|_/.exec(address)
 

@@ -146,9 +146,9 @@ export const TAPROOT_STATE_PUSH_SIZE = 32
 export const TAPROOT_SIZE_WITHOUT_STATE =
   TAPROOT_INTRO_SIZE + PUBKEY_COMPRESSED_SIZE // 36 bytes
 
-/** Size of P2TR output with state: intro (3) + pubkey (33) + state_push (1) + state (32) = 69 bytes
- * Matches lotusd: TAPROOT_INTRO_SIZE + CPubKey::COMPRESSED_SIZE + 33
- * The final 33 = 1 byte push opcode (0x20) + 32 bytes state hash
+/**
+ * Size of P2TR output with state:
+ * intro (3) + pubkey (33) + state_push (1) + state (32) = 69 bytes
  */
 export const TAPROOT_SIZE_WITH_STATE =
   TAPROOT_INTRO_SIZE + PUBKEY_COMPRESSED_SIZE + 1 + SHA256_HASH_SIZE // 69 bytes
@@ -218,13 +218,29 @@ export function calculateTapTweak(
 }
 
 /**
- * Calculate TapLeaf hash
+ * Calculate TapLeaf hash for a Taproot script tree leaf
  *
- * tapleaf_hash = SHA256_Tag("TapLeaf", leaf_version || compact_size(script) || script)
+ * This function computes the leaf hash used in Taproot's Merkle tree construction.
+ * Each leaf in a Taproot script tree represents a spending condition (script),
+ * and its hash commits to both the script content and the leaf version.
  *
- * @param script - Tapscript
- * @param leafVersion - Leaf version (default: 0xc0 for tapscript)
- * @returns SHA256_HASH_SIZE-byte tapleaf hash
+ * The leaf hash is used to:
+ * 1. Build the Merkle tree structure via {@link calculateTapBranch}
+ * 2. Compute the Merkle root that gets tweaked into the output pubkey
+ * 3. Verify script path spends by reconstructing the commitment
+ *
+ * Formula: tapleaf_hash = SHA256_Tag("TapLeaf", leaf_version || compact_size(script) || script)
+ *
+ * The leaf version allows for future upgrades to the Tapscript rules while
+ * maintaining backward compatibility. Currently, 0xc0 is used for standard tapscript.
+ *
+ * @param script - The spending condition script (Tapscript)
+ * @param leafVersion - Leaf version byte (default: 0xc0 for tapscript per BIP342)
+ * @returns SHA256_HASH_SIZE-byte tapleaf hash used in Merkle tree construction
+ *
+ * @see {@link calculateTapBranch} - Combines leaf hashes into branch hashes
+ * @see {@link buildTapTree} - Builds complete Taproot tree using leaf hashes
+ * @see {@link verifyTaprootCommitment} - Verifies leaf inclusion in commitment
  */
 export function calculateTapLeaf(
   script: Script | Buffer,
@@ -789,6 +805,9 @@ export function verifyTaprootSpend(
   // Create new stack without script and control block
   const newStack = stack.slice(0, stack.length - 2)
 
+  // === Validate control block structure ===
+  // Reference: lotusd/src/script/interpreter.cpp lines 2175-2186
+
   // Validate control block size
   const sizeRemainder =
     (controlBlock.length - TAPROOT_CONTROL_BASE_SIZE) %
@@ -848,7 +867,8 @@ export function verifyTaprootSpend(
   const scriptPubkeyBuf = scriptPubkey.toBuffer()
   if (scriptPubkeyBuf.length === TAPROOT_SIZE_WITH_STATE) {
     const state = extractTaprootState(scriptPubkey)
-    if (state) {
+    // make sure we also validate the state size
+    if (state && state.length === SHA256_HASH_SIZE) {
       newStack.push(state)
     }
   }
