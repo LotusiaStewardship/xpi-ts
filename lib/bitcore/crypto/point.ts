@@ -3,14 +3,40 @@
  * Migrated from bitcore-lib-xpi with ESM support
  */
 
-import { ec, type curve } from 'elliptic'
+import * as elliptic from 'elliptic'
 import { BN } from './bn'
 import { BufferUtil } from '../util'
 import type { Buffer } from 'buffer/'
+import type { ec, curve } from 'elliptic'
 
-const ecInstance = new ec('secp256k1')
-const ecPoint = ecInstance.curve.point.bind(ecInstance.curve)
-const ecPointFromX = ecInstance.curve.pointFromX.bind(ecInstance.curve)
+/**
+ * Create an elliptic curve instance for secp256k1 operations.
+ *
+ * The dual import pattern `(elliptic as any).default || elliptic` is necessary for
+ * compatibility across both CJS and ESM build environments:
+ *
+ * - With `esModuleInterop: true` (or bundlers like esbuild/webpack that synthesize
+ *   ESM interop), the CJS exports are placed under `.default`, so we access
+ *   `elliptic.default.ec()`.
+ * - With `esModuleInterop: false` (this project's setting), `import * as elliptic`
+ *   binds the CJS `module.exports` object directly to the namespace, so we access
+ *   `elliptic.ec()`.
+ *
+ * This fallback ensures the library works correctly regardless of how the module
+ * is resolved at runtime.
+ */
+const ecInstance = new ((elliptic as any).default || elliptic).ec(
+  'secp256k1',
+) as ec
+const ecPoint = ecInstance.curve.point.bind(ecInstance.curve) as (
+  x: any,
+  y: any,
+  isRed?: boolean,
+) => curve.base.BasePoint
+const ecPointFromX = ecInstance.curve.pointFromX.bind(ecInstance.curve) as (
+  x: any,
+  isOdd: boolean,
+) => curve.base.BasePoint
 
 /** Prefix byte for compressed point with odd Y-coordinate */
 export const PREFIX_Y_ODD = 0x03
