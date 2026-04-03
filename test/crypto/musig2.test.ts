@@ -8,29 +8,29 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert'
 import { Buffer } from 'buffer/'
 import {
-  musigKeyAgg,
-  musigNonceGen,
-  musigNonceAgg,
-  musigPartialSign,
-  musigPartialSigVerify,
-  musigSigAgg,
+  muSig2KeyAgg,
+  muSig2NonceGen,
+  muSig2NonceAgg,
+  muSig2PartialSign,
+  muSig2PartialSigVerify,
+  muSig2SigAgg,
   PrivateKey,
   Schnorr,
   BN,
 } from '../../lib/bitcore/index.js'
 import {
-  buildMuSigTaprootKey,
+  buildMuSig2TaprootKey,
   signTaprootKeyPathWithMuSig2,
   verifyTaprootKeyPathMuSigPartial,
 } from '../../lib/bitcore/taproot/musig2.js'
 
 describe('MuSig2', () => {
-  describe('musigKeyAgg', () => {
+  describe('muSig2KeyAgg', () => {
     it('should aggregate 2 public keys', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
 
-      const ctx = musigKeyAgg([key1.publicKey, key2.publicKey])
+      const ctx = muSig2KeyAgg([key1.publicKey, key2.publicKey])
 
       assert.strictEqual(ctx.pubkeys.length, 2)
       assert.ok(ctx.aggregatedPubKey)
@@ -48,7 +48,7 @@ describe('MuSig2', () => {
         new PrivateKey(),
       ]
 
-      const ctx = musigKeyAgg(keys.map(k => k.publicKey))
+      const ctx = muSig2KeyAgg(keys.map(k => k.publicKey))
 
       assert.strictEqual(ctx.pubkeys.length, 5)
       assert.ok(ctx.aggregatedPubKey)
@@ -65,8 +65,8 @@ describe('MuSig2', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
 
-      const ctx1 = musigKeyAgg([key1.publicKey, key2.publicKey])
-      const ctx2 = musigKeyAgg([key1.publicKey, key2.publicKey])
+      const ctx1 = muSig2KeyAgg([key1.publicKey, key2.publicKey])
+      const ctx2 = muSig2KeyAgg([key1.publicKey, key2.publicKey])
 
       assert.strictEqual(
         ctx1.aggregatedPubKey.toString(),
@@ -79,8 +79,8 @@ describe('MuSig2', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
 
-      const ctx1 = musigKeyAgg([key1.publicKey, key2.publicKey])
-      const ctx2 = musigKeyAgg([key2.publicKey, key1.publicKey])
+      const ctx1 = muSig2KeyAgg([key1.publicKey, key2.publicKey])
+      const ctx2 = muSig2KeyAgg([key2.publicKey, key1.publicKey])
 
       // Keys are sorted lexicographically, so order doesn't matter
       assert.strictEqual(
@@ -104,18 +104,18 @@ describe('MuSig2', () => {
 
     it('should throw on empty pubkeys array', () => {
       assert.throws(() => {
-        musigKeyAgg([])
+        muSig2KeyAgg([])
       }, /Cannot aggregate zero public keys/)
     })
   })
 
-  describe('musigNonceGen', () => {
+  describe('muSig2NonceGen', () => {
     it('should generate valid nonces', () => {
       const key = new PrivateKey()
-      const ctx = musigKeyAgg([key.publicKey])
+      const ctx = muSig2KeyAgg([key.publicKey])
       const message = Buffer.from('test message', 'utf8')
 
-      const nonce = musigNonceGen(key, ctx.aggregatedPubKey, message)
+      const nonce = muSig2NonceGen(key, ctx.aggregatedPubKey, message)
 
       assert.ok(nonce.secretNonces)
       assert.ok(nonce.publicNonces)
@@ -129,12 +129,12 @@ describe('MuSig2', () => {
 
     it('should generate different nonces for different messages', () => {
       const key = new PrivateKey()
-      const ctx = musigKeyAgg([key.publicKey])
+      const ctx = muSig2KeyAgg([key.publicKey])
       const message1 = Buffer.from('message 1', 'utf8')
       const message2 = Buffer.from('message 2', 'utf8')
 
-      const nonce1 = musigNonceGen(key, ctx.aggregatedPubKey, message1)
-      const nonce2 = musigNonceGen(key, ctx.aggregatedPubKey, message2)
+      const nonce1 = muSig2NonceGen(key, ctx.aggregatedPubKey, message1)
+      const nonce2 = muSig2NonceGen(key, ctx.aggregatedPubKey, message2)
 
       // Different messages should produce different nonces
       assert.notStrictEqual(
@@ -145,27 +145,30 @@ describe('MuSig2', () => {
 
     it('should generate non-zero nonces', () => {
       const key = new PrivateKey()
-      const ctx = musigKeyAgg([key.publicKey])
+      const ctx = muSig2KeyAgg([key.publicKey])
       const message = Buffer.from('test', 'utf8')
 
-      const nonce = musigNonceGen(key, ctx.aggregatedPubKey, message)
+      const nonce = muSig2NonceGen(key, ctx.aggregatedPubKey, message)
 
       assert.ok(!nonce.secretNonces[0].isZero())
       assert.ok(!nonce.secretNonces[1].isZero())
     })
   })
 
-  describe('musigNonceAgg', () => {
+  describe('muSig2NonceAgg', () => {
     it('should aggregate 2 nonces', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
-      const ctx = musigKeyAgg([key1.publicKey, key2.publicKey])
+      const ctx = muSig2KeyAgg([key1.publicKey, key2.publicKey])
       const message = Buffer.from('test', 'utf8')
 
-      const nonce1 = musigNonceGen(key1, ctx.aggregatedPubKey, message)
-      const nonce2 = musigNonceGen(key2, ctx.aggregatedPubKey, message)
+      const nonce1 = muSig2NonceGen(key1, ctx.aggregatedPubKey, message)
+      const nonce2 = muSig2NonceGen(key2, ctx.aggregatedPubKey, message)
 
-      const aggNonce = musigNonceAgg([nonce1.publicNonces, nonce2.publicNonces])
+      const aggNonce = muSig2NonceAgg([
+        nonce1.publicNonces,
+        nonce2.publicNonces,
+      ])
 
       assert.ok(aggNonce.R1)
       assert.ok(aggNonce.R2)
@@ -173,14 +176,14 @@ describe('MuSig2', () => {
 
     it('should aggregate N nonces', () => {
       const keys = [new PrivateKey(), new PrivateKey(), new PrivateKey()]
-      const ctx = musigKeyAgg(keys.map(k => k.publicKey))
+      const ctx = muSig2KeyAgg(keys.map(k => k.publicKey))
       const message = Buffer.from('test', 'utf8')
 
       const nonces = keys.map(k =>
-        musigNonceGen(k, ctx.aggregatedPubKey, message),
+        muSig2NonceGen(k, ctx.aggregatedPubKey, message),
       )
 
-      const aggNonce = musigNonceAgg(nonces.map(n => n.publicNonces))
+      const aggNonce = muSig2NonceAgg(nonces.map(n => n.publicNonces))
 
       assert.ok(aggNonce.R1)
       assert.ok(aggNonce.R2)
@@ -188,23 +191,26 @@ describe('MuSig2', () => {
 
     it('should throw on empty nonces array', () => {
       assert.throws(() => {
-        musigNonceAgg([])
+        muSig2NonceAgg([])
       }, /Cannot aggregate zero nonces/)
     })
   })
 
-  describe('musigPartialSign', () => {
+  describe('muSig2PartialSign', () => {
     it('should create valid partial signature', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
-      const ctx = musigKeyAgg([key1.publicKey, key2.publicKey])
+      const ctx = muSig2KeyAgg([key1.publicKey, key2.publicKey])
       const message = Buffer.alloc(32).fill(0x42)
 
-      const nonce1 = musigNonceGen(key1, ctx.aggregatedPubKey, message)
-      const nonce2 = musigNonceGen(key2, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([nonce1.publicNonces, nonce2.publicNonces])
+      const nonce1 = muSig2NonceGen(key1, ctx.aggregatedPubKey, message)
+      const nonce2 = muSig2NonceGen(key2, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([
+        nonce1.publicNonces,
+        nonce2.publicNonces,
+      ])
 
-      const partialSig1 = musigPartialSign(
+      const partialSig1 = muSig2PartialSign(
         nonce1,
         key1,
         ctx,
@@ -220,39 +226,45 @@ describe('MuSig2', () => {
     it('should throw on invalid signer index', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
-      const ctx = musigKeyAgg([key1.publicKey, key2.publicKey])
+      const ctx = muSig2KeyAgg([key1.publicKey, key2.publicKey])
       const message = Buffer.alloc(32).fill(0x42)
 
-      const nonce1 = musigNonceGen(key1, ctx.aggregatedPubKey, message)
-      const nonce2 = musigNonceGen(key2, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([nonce1.publicNonces, nonce2.publicNonces])
+      const nonce1 = muSig2NonceGen(key1, ctx.aggregatedPubKey, message)
+      const nonce2 = muSig2NonceGen(key2, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([
+        nonce1.publicNonces,
+        nonce2.publicNonces,
+      ])
 
       // With the new API, signing uses public key lookup, not index
       // Create a key that's not in the context to test error handling
       const unknownKey = new PrivateKey()
-      const unknownNonce = musigNonceGen(
+      const unknownNonce = muSig2NonceGen(
         unknownKey,
         ctx.aggregatedPubKey,
         message,
       )
       assert.throws(() => {
-        musigPartialSign(unknownNonce, unknownKey, ctx, 0, aggNonce, message)
+        muSig2PartialSign(unknownNonce, unknownKey, ctx, 0, aggNonce, message)
       }, /Public key not found in key aggregation context/)
     })
   })
 
-  describe('musigPartialSigVerify', () => {
+  describe('muSig2PartialSigVerify', () => {
     it('should verify valid partial signature', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
-      const ctx = musigKeyAgg([key1.publicKey, key2.publicKey])
+      const ctx = muSig2KeyAgg([key1.publicKey, key2.publicKey])
       const message = Buffer.alloc(32).fill(0x42)
 
-      const nonce1 = musigNonceGen(key1, ctx.aggregatedPubKey, message)
-      const nonce2 = musigNonceGen(key2, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([nonce1.publicNonces, nonce2.publicNonces])
+      const nonce1 = muSig2NonceGen(key1, ctx.aggregatedPubKey, message)
+      const nonce2 = muSig2NonceGen(key2, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([
+        nonce1.publicNonces,
+        nonce2.publicNonces,
+      ])
 
-      const partialSig1 = musigPartialSign(
+      const partialSig1 = muSig2PartialSign(
         nonce1,
         key1,
         ctx,
@@ -261,7 +273,7 @@ describe('MuSig2', () => {
         message,
       )
 
-      const valid = musigPartialSigVerify(
+      const valid = muSig2PartialSigVerify(
         partialSig1,
         nonce1.publicNonces,
         key1.publicKey,
@@ -277,14 +289,17 @@ describe('MuSig2', () => {
     it('should reject invalid partial signature', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
-      const ctx = musigKeyAgg([key1.publicKey, key2.publicKey])
+      const ctx = muSig2KeyAgg([key1.publicKey, key2.publicKey])
       const message = Buffer.alloc(32).fill(0x42)
 
-      const nonce1 = musigNonceGen(key1, ctx.aggregatedPubKey, message)
-      const nonce2 = musigNonceGen(key2, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([nonce1.publicNonces, nonce2.publicNonces])
+      const nonce1 = muSig2NonceGen(key1, ctx.aggregatedPubKey, message)
+      const nonce2 = muSig2NonceGen(key2, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([
+        nonce1.publicNonces,
+        nonce2.publicNonces,
+      ])
 
-      const partialSig1 = musigPartialSign(
+      const partialSig1 = muSig2PartialSign(
         nonce1,
         key1,
         ctx,
@@ -296,7 +311,7 @@ describe('MuSig2', () => {
       // Tamper with the partial signature
       const invalidPartialSig = partialSig1.add(new BN(1))
 
-      const valid = musigPartialSigVerify(
+      const valid = muSig2PartialSigVerify(
         invalidPartialSig,
         nonce1.publicNonces,
         key1.publicKey,
@@ -310,18 +325,21 @@ describe('MuSig2', () => {
     })
   })
 
-  describe('musigSigAgg', () => {
+  describe('muSig2SigAgg', () => {
     it('should aggregate partial signatures', () => {
       const key1 = new PrivateKey()
       const key2 = new PrivateKey()
-      const ctx = musigKeyAgg([key1.publicKey, key2.publicKey])
+      const ctx = muSig2KeyAgg([key1.publicKey, key2.publicKey])
       const message = Buffer.alloc(32).fill(0x42)
 
-      const nonce1 = musigNonceGen(key1, ctx.aggregatedPubKey, message)
-      const nonce2 = musigNonceGen(key2, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([nonce1.publicNonces, nonce2.publicNonces])
+      const nonce1 = muSig2NonceGen(key1, ctx.aggregatedPubKey, message)
+      const nonce2 = muSig2NonceGen(key2, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([
+        nonce1.publicNonces,
+        nonce2.publicNonces,
+      ])
 
-      const partialSig1 = musigPartialSign(
+      const partialSig1 = muSig2PartialSign(
         nonce1,
         key1,
         ctx,
@@ -329,7 +347,7 @@ describe('MuSig2', () => {
         aggNonce,
         message,
       )
-      const partialSig2 = musigPartialSign(
+      const partialSig2 = muSig2PartialSign(
         nonce2,
         key2,
         ctx,
@@ -338,7 +356,7 @@ describe('MuSig2', () => {
         message,
       )
 
-      const finalSig = musigSigAgg(
+      const finalSig = muSig2SigAgg(
         [partialSig1, partialSig2],
         aggNonce,
         message,
@@ -352,13 +370,13 @@ describe('MuSig2', () => {
 
     it('should throw on empty partial signatures array', () => {
       const key = new PrivateKey()
-      const ctx = musigKeyAgg([key.publicKey])
+      const ctx = muSig2KeyAgg([key.publicKey])
       const message = Buffer.alloc(32).fill(0x42)
-      const nonce = musigNonceGen(key, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([nonce.publicNonces])
+      const nonce = muSig2NonceGen(key, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([nonce.publicNonces])
 
       assert.throws(() => {
-        musigSigAgg([], aggNonce, message, ctx.aggregatedPubKey)
+        muSig2SigAgg([], aggNonce, message, ctx.aggregatedPubKey)
       }, /Cannot aggregate zero partial signatures/)
     })
   })
@@ -370,7 +388,7 @@ describe('MuSig2', () => {
       const bob = new PrivateKey()
 
       // Step 1: Key Aggregation
-      const ctx = musigKeyAgg([alice.publicKey, bob.publicKey])
+      const ctx = muSig2KeyAgg([alice.publicKey, bob.publicKey])
       console.log('Aggregated key:', ctx.aggregatedPubKey.toString())
 
       // Step 2: Message to sign
@@ -385,8 +403,8 @@ describe('MuSig2', () => {
       )
 
       // Step 4: Nonce Generation (each signer independently)
-      const aliceNonce = musigNonceGen(alice, ctx.aggregatedPubKey, message)
-      const bobNonce = musigNonceGen(bob, ctx.aggregatedPubKey, message)
+      const aliceNonce = muSig2NonceGen(alice, ctx.aggregatedPubKey, message)
+      const bobNonce = muSig2NonceGen(bob, ctx.aggregatedPubKey, message)
 
       // Step 5: Nonce Aggregation in sorted order
       const noncesInOrder = [
@@ -396,10 +414,10 @@ describe('MuSig2', () => {
         .sort((a, b) => a.index - b.index)
         .map(x => x.nonces)
 
-      const aggNonce = musigNonceAgg(noncesInOrder)
+      const aggNonce = muSig2NonceAgg(noncesInOrder)
 
       // Step 6: Partial Signatures (each signer independently, using sorted indices)
-      const alicePartialSig = musigPartialSign(
+      const alicePartialSig = muSig2PartialSign(
         aliceNonce,
         alice,
         ctx,
@@ -407,7 +425,7 @@ describe('MuSig2', () => {
         aggNonce,
         message,
       )
-      const bobPartialSig = musigPartialSign(
+      const bobPartialSig = muSig2PartialSign(
         bobNonce,
         bob,
         ctx,
@@ -417,7 +435,7 @@ describe('MuSig2', () => {
       )
 
       // Step 7: Verify Partial Signatures (recommended)
-      const aliceValid = musigPartialSigVerify(
+      const aliceValid = muSig2PartialSigVerify(
         alicePartialSig,
         aliceNonce.publicNonces,
         alice.publicKey,
@@ -426,7 +444,7 @@ describe('MuSig2', () => {
         aggNonce,
         message,
       )
-      const bobValid = musigPartialSigVerify(
+      const bobValid = muSig2PartialSigVerify(
         bobPartialSig,
         bobNonce.publicNonces,
         bob.publicKey,
@@ -447,7 +465,7 @@ describe('MuSig2', () => {
         .sort((a, b) => a.index - b.index)
         .map(x => x.sig)
 
-      const finalSig = musigSigAgg(
+      const finalSig = muSig2SigAgg(
         partialSigs,
         aggNonce,
         message,
@@ -474,7 +492,11 @@ describe('MuSig2', () => {
       const carol = new PrivateKey()
 
       // Key aggregation
-      const ctx = musigKeyAgg([alice.publicKey, bob.publicKey, carol.publicKey])
+      const ctx = muSig2KeyAgg([
+        alice.publicKey,
+        bob.publicKey,
+        carol.publicKey,
+      ])
 
       const message = Buffer.alloc(32).fill(0x02)
 
@@ -490,9 +512,9 @@ describe('MuSig2', () => {
       )
 
       // Nonce generation
-      const aliceNonce = musigNonceGen(alice, ctx.aggregatedPubKey, message)
-      const bobNonce = musigNonceGen(bob, ctx.aggregatedPubKey, message)
-      const carolNonce = musigNonceGen(carol, ctx.aggregatedPubKey, message)
+      const aliceNonce = muSig2NonceGen(alice, ctx.aggregatedPubKey, message)
+      const bobNonce = muSig2NonceGen(bob, ctx.aggregatedPubKey, message)
+      const carolNonce = muSig2NonceGen(carol, ctx.aggregatedPubKey, message)
 
       // Nonce aggregation in sorted order
       const noncesInOrder = [
@@ -503,10 +525,10 @@ describe('MuSig2', () => {
         .sort((a, b) => a.index - b.index)
         .map(x => x.nonces)
 
-      const aggNonce = musigNonceAgg(noncesInOrder)
+      const aggNonce = muSig2NonceAgg(noncesInOrder)
 
       // Partial signatures using sorted indices
-      const alicePartialSig = musigPartialSign(
+      const alicePartialSig = muSig2PartialSign(
         aliceNonce,
         alice,
         ctx,
@@ -514,7 +536,7 @@ describe('MuSig2', () => {
         aggNonce,
         message,
       )
-      const bobPartialSig = musigPartialSign(
+      const bobPartialSig = muSig2PartialSign(
         bobNonce,
         bob,
         ctx,
@@ -522,7 +544,7 @@ describe('MuSig2', () => {
         aggNonce,
         message,
       )
-      const carolPartialSig = musigPartialSign(
+      const carolPartialSig = muSig2PartialSign(
         carolNonce,
         carol,
         ctx,
@@ -540,7 +562,7 @@ describe('MuSig2', () => {
         .sort((a, b) => a.index - b.index)
         .map(x => x.sig)
 
-      const finalSig = musigSigAgg(
+      const finalSig = muSig2SigAgg(
         partialSigs,
         aggNonce,
         message,
@@ -562,17 +584,17 @@ describe('MuSig2', () => {
     it('should fail if partial signature is missing', () => {
       const alice = new PrivateKey()
       const bob = new PrivateKey()
-      const ctx = musigKeyAgg([alice.publicKey, bob.publicKey])
+      const ctx = muSig2KeyAgg([alice.publicKey, bob.publicKey])
       const message = Buffer.alloc(32).fill(0x03)
 
-      const aliceNonce = musigNonceGen(alice, ctx.aggregatedPubKey, message)
-      const bobNonce = musigNonceGen(bob, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([
+      const aliceNonce = muSig2NonceGen(alice, ctx.aggregatedPubKey, message)
+      const bobNonce = muSig2NonceGen(bob, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([
         aliceNonce.publicNonces,
         bobNonce.publicNonces,
       ])
 
-      const alicePartialSig = musigPartialSign(
+      const alicePartialSig = muSig2PartialSign(
         aliceNonce,
         alice,
         ctx,
@@ -582,7 +604,7 @@ describe('MuSig2', () => {
       )
 
       // Only aggregate Alice's signature (missing Bob's)
-      const finalSig = musigSigAgg(
+      const finalSig = muSig2SigAgg(
         [alicePartialSig],
         aggNonce,
         message,
@@ -604,15 +626,22 @@ describe('MuSig2', () => {
   describe('Edge Cases', () => {
     it('should handle single signer (degenerate case)', () => {
       const key = new PrivateKey()
-      const ctx = musigKeyAgg([key.publicKey])
+      const ctx = muSig2KeyAgg([key.publicKey])
       const message = Buffer.alloc(32).fill(0x04)
 
-      const nonce = musigNonceGen(key, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([nonce.publicNonces])
+      const nonce = muSig2NonceGen(key, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([nonce.publicNonces])
 
-      const partialSig = musigPartialSign(nonce, key, ctx, 0, aggNonce, message)
+      const partialSig = muSig2PartialSign(
+        nonce,
+        key,
+        ctx,
+        0,
+        aggNonce,
+        message,
+      )
 
-      const finalSig = musigSigAgg(
+      const finalSig = muSig2SigAgg(
         [partialSig],
         aggNonce,
         message,
@@ -631,12 +660,12 @@ describe('MuSig2', () => {
 
     it('should work with many signers (10-of-10)', () => {
       const keys = Array.from({ length: 10 }, () => new PrivateKey())
-      const ctx = musigKeyAgg(keys.map(k => k.publicKey))
+      const ctx = muSig2KeyAgg(keys.map(k => k.publicKey))
       const message = Buffer.alloc(32).fill(0x05)
 
       // Generate nonces for each key (in original order)
       const nonces = keys.map(k =>
-        musigNonceGen(k, ctx.aggregatedPubKey, message),
+        muSig2NonceGen(k, ctx.aggregatedPubKey, message),
       )
 
       // Create mapping from sorted pubkeys back to original indices
@@ -652,12 +681,12 @@ describe('MuSig2', () => {
         return nonces[originalIdx].publicNonces
       })
 
-      const aggNonce = musigNonceAgg(sortedNonces)
+      const aggNonce = muSig2NonceAgg(sortedNonces)
 
       // Create partial signatures using sorted indices
       const partialSigs = keys.map((k, originalIdx) => {
         const sortedIdx = sortedIndices[originalIdx]
-        return musigPartialSign(
+        return muSig2PartialSign(
           nonces[originalIdx],
           k,
           ctx,
@@ -675,7 +704,7 @@ describe('MuSig2', () => {
         return partialSigs[originalIdx]
       })
 
-      const finalSig = musigSigAgg(
+      const finalSig = muSig2SigAgg(
         sortedPartialSigs,
         aggNonce,
         message,
@@ -701,7 +730,7 @@ describe('MuSig2', () => {
     it('should handle quadratic residue edge case (R.y not a quadratic residue)', () => {
       const alice = new PrivateKey()
       const bob = new PrivateKey()
-      const ctx = musigKeyAgg([alice.publicKey, bob.publicKey])
+      const ctx = muSig2KeyAgg([alice.publicKey, bob.publicKey])
       const message = Buffer.alloc(32).fill(0x42)
 
       // Generate multiple signing attempts to find one with non-quadratic residue
@@ -709,15 +738,15 @@ describe('MuSig2', () => {
       let aliceNonce, bobNonce, aggNonce
 
       for (let attempt = 0; attempt < 100; attempt++) {
-        aliceNonce = musigNonceGen(alice, ctx.aggregatedPubKey, message)
-        bobNonce = musigNonceGen(bob, ctx.aggregatedPubKey, message)
-        aggNonce = musigNonceAgg([
+        aliceNonce = muSig2NonceGen(alice, ctx.aggregatedPubKey, message)
+        bobNonce = muSig2NonceGen(bob, ctx.aggregatedPubKey, message)
+        aggNonce = muSig2NonceAgg([
           aliceNonce.publicNonces,
           bobNonce.publicNonces,
         ])
 
         // Create partial signatures and verify them
-        const alicePartialSig = musigPartialSign(
+        const alicePartialSig = muSig2PartialSign(
           aliceNonce,
           alice,
           ctx,
@@ -725,7 +754,7 @@ describe('MuSig2', () => {
           aggNonce,
           message,
         )
-        const bobPartialSig = musigPartialSign(
+        const bobPartialSig = muSig2PartialSign(
           bobNonce,
           bob,
           ctx,
@@ -735,7 +764,7 @@ describe('MuSig2', () => {
         )
 
         // Verify partial signatures
-        const aliceValid = musigPartialSigVerify(
+        const aliceValid = muSig2PartialSigVerify(
           alicePartialSig,
           aliceNonce.publicNonces,
           alice.publicKey,
@@ -744,7 +773,7 @@ describe('MuSig2', () => {
           aggNonce,
           message,
         )
-        const bobValid = musigPartialSigVerify(
+        const bobValid = muSig2PartialSigVerify(
           bobPartialSig,
           bobNonce.publicNonces,
           bob.publicKey,
@@ -758,7 +787,7 @@ describe('MuSig2', () => {
         assert.ok(bobValid, 'Bob partial signature should verify')
 
         // Verify the aggregated signature
-        const finalSig = musigSigAgg(
+        const finalSig = muSig2SigAgg(
           [alicePartialSig, bobPartialSig],
           aggNonce,
           message,
@@ -794,18 +823,18 @@ describe('MuSig2', () => {
     it('should verify partial signatures with consistent challenge hash', () => {
       const alice = new PrivateKey()
       const bob = new PrivateKey()
-      const ctx = musigKeyAgg([alice.publicKey, bob.publicKey])
+      const ctx = muSig2KeyAgg([alice.publicKey, bob.publicKey])
       const message = Buffer.alloc(32).fill(0x99)
 
-      const aliceNonce = musigNonceGen(alice, ctx.aggregatedPubKey, message)
-      const bobNonce = musigNonceGen(bob, ctx.aggregatedPubKey, message)
-      const aggNonce = musigNonceAgg([
+      const aliceNonce = muSig2NonceGen(alice, ctx.aggregatedPubKey, message)
+      const bobNonce = muSig2NonceGen(bob, ctx.aggregatedPubKey, message)
+      const aggNonce = muSig2NonceAgg([
         aliceNonce.publicNonces,
         bobNonce.publicNonces,
       ])
 
       // Create partial signatures with default (non-Taproot) path
-      const alicePartialSig = musigPartialSign(
+      const alicePartialSig = muSig2PartialSign(
         aliceNonce,
         alice,
         ctx,
@@ -815,7 +844,7 @@ describe('MuSig2', () => {
       )
 
       // Verify with same challenge hash
-      const valid = musigPartialSigVerify(
+      const valid = muSig2PartialSigVerify(
         alicePartialSig,
         aliceNonce.publicNonces,
         alice.publicKey,
@@ -839,7 +868,7 @@ describe('MuSig2', () => {
       const bob = new PrivateKey()
 
       // Create Taproot output
-      const taprootResult = buildMuSigTaprootKey([
+      const taprootResult = buildMuSig2TaprootKey([
         alice.publicKey,
         bob.publicKey,
       ])
@@ -848,17 +877,17 @@ describe('MuSig2', () => {
       const message = Buffer.alloc(32).fill(0x01)
 
       // Generate nonces using aggregated key
-      const aliceNonce = musigNonceGen(
+      const aliceNonce = muSig2NonceGen(
         alice,
         taprootResult.keyAggContext.aggregatedPubKey,
         message,
       )
-      const bobNonce = musigNonceGen(
+      const bobNonce = muSig2NonceGen(
         bob,
         taprootResult.keyAggContext.aggregatedPubKey,
         message,
       )
-      const aggNonce = musigNonceAgg([
+      const aggNonce = muSig2NonceAgg([
         aliceNonce.publicNonces,
         bobNonce.publicNonces,
       ])
