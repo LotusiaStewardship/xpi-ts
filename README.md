@@ -423,10 +423,17 @@ npm run test:coverage
 ### Build
 
 ```bash
-# Compile TypeScript
+# Run full gulp build pipeline (clean + types + esm + cjs + export validation)
 npm run build
 
-# Watch mode
+# Run targeted pipeline stages
+npm run build:clean
+npm run build:types
+npm run build:esm
+npm run build:cjs
+npm run build:validate
+
+# Watch mode (rebuilds types + esm + cjs)
 npm run build:watch
 ```
 
