@@ -210,6 +210,14 @@ export class Transaction {
   }
 
   /**
+   * Get the estimated transaction size in bytes.
+   * @returns {number} - The size of the transaction in bytes.
+   */
+  get estimatedSize(): number {
+    return this._estimateSize()
+  }
+
+  /**
    * Get the transaction hash (little endian)
    */
   get hash(): string {

@@ -292,17 +292,20 @@ export class Script {
       if (opcodenum === undefined) {
         const buf = BufferUtil.from(tokens[i], 'hex')
         let opcodenum: number
-        const len = buf.length
-        if (len >= 0 && len < Opcode.OP_PUSHDATA1) {
-          opcodenum = len
-        } else if (len < Math.pow(2, 8)) {
+        if (buf.length >= 0 && buf.length < Opcode.OP_PUSHDATA1) {
+          opcodenum = buf.length
+          // otherwise if buf.length <= 255
+        } else if (buf.length <= 0xff) {
           opcodenum = Opcode.OP_PUSHDATA1
-        } else if (len < Math.pow(2, 16)) {
+          // otherwise if buf.length <= 65535
+        } else if (buf.length <= 0xffff) {
           opcodenum = Opcode.OP_PUSHDATA2
-        } else if (len < Math.pow(2, 32)) {
-          opcodenum = Opcode.OP_PUSHDATA4
         } else {
-          throw new Error('Invalid push data length')
+          opcodenum = Opcode.OP_PUSHDATA4
+        }
+
+        if (!opcodenum) {
+          throw new Error(`Invalid script chunk buffer length (${buf.length})`)
         }
         script.chunks.push(
           new Chunk({
@@ -869,41 +872,12 @@ export class Script {
 
   /**
    * Add a chunk to the script
-   * @param chunk - The opcode, buffer, or number to add
+   * @param chunk - The opcode, opcode mnemonic string, hex data string, buffer, or number to add
    * @returns This Script instance for chaining
    */
-  add(chunk: Opcode | Buffer | number): Script {
-    if (chunk instanceof Opcode) {
-      this.chunks.push(
-        new Chunk({
-          opcodenum: chunk.num,
-        }),
-      )
-    } else if (BufferUtil.isBuffer(chunk)) {
-      const chunkObj = {
-        buf: chunk,
-        len: chunk.length,
-        opcodenum: chunk.length,
-      }
-      if (chunk.length < Opcode.OP_PUSHDATA1) {
-        chunkObj.opcodenum = chunk.length
-      } else if (chunk.length <= 0xff) {
-        chunkObj.opcodenum = Opcode.OP_PUSHDATA1
-      } else if (chunk.length <= 0xffff) {
-        chunkObj.opcodenum = Opcode.OP_PUSHDATA2
-      } else {
-        chunkObj.opcodenum = Opcode.OP_PUSHDATA4
-      }
-      this.chunks.push(new Chunk(chunkObj))
-    } else if (typeof chunk === 'number') {
-      this.chunks.push(
-        new Chunk({
-          opcodenum: chunk,
-        }),
-      )
-    } else {
-      throw new TypeError('Invalid chunk type')
-    }
+  add(chunk: Opcode | Buffer | number | string): Script {
+    // all chunk parsing routes to internal parsing
+    this._addByType(chunk, false)
     return this
   }
 
@@ -1897,22 +1871,26 @@ export class Script {
    */
   private _addBuffer(buf: Buffer, prepend: boolean): void {
     let opcodenum: number
-    const len = buf.length
-    if (len >= 0 && len < Opcode.OP_PUSHDATA1) {
-      opcodenum = len
-    } else if (len < Math.pow(2, 8)) {
+    if (buf.length >= 0 && buf.length < Opcode.OP_PUSHDATA1) {
+      opcodenum = buf.length
+      // otherwise if buf.length <= 255
+    } else if (buf.length <= 0xff) {
       opcodenum = Opcode.OP_PUSHDATA1
-    } else if (len < Math.pow(2, 16)) {
+      // otherwise if buf.length <= 65535
+    } else if (buf.length <= 0xffff) {
       opcodenum = Opcode.OP_PUSHDATA2
-    } else if (len < Math.pow(2, 32)) {
-      opcodenum = Opcode.OP_PUSHDATA4
     } else {
-      throw new Error("You can't push that much data")
+      opcodenum = Opcode.OP_PUSHDATA4
     }
+
+    if (!opcodenum) {
+      throw new Error(`Invalid script chunk buffer length (${buf.length})`)
+    }
+
     this._insertAtPosition(
       {
         buf: buf,
-        len: len,
+        len: buf.length,
         opcodenum: opcodenum,
       },
       prepend,
