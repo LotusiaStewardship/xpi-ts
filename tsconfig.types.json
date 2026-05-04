@@ -5,8 +5,8 @@
     "moduleResolution": "node10",
     "outDir": "./dist/types",
     "declaration": true,
-    "declarationMap": true,
+    "declarationMap": false,
     "emitDeclarationOnly": true,
-    "removeComments": false,
+    "removeComments": false
   }
 }

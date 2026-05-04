@@ -778,7 +778,7 @@ export function fromScriptRNKC(
 
   // Construct and return the parsed RNKC output
   const result: TransactionOutputRNKC = {
-    data: new Uint8Array(commentBuf),
+    data: Uint8Array.from(commentBuf),
     feeRate: Math.floor(burnedSatsNum / commentBuf.length),
     inReplyToPlatform: platform,
     inReplyToProfileId: profileId,
@@ -1144,7 +1144,7 @@ export class ScriptProcessor {
     if (!commentBuf) {
       return null
     }
-    return new Uint8Array(commentBuf)
+    return Uint8Array.from(commentBuf) as Uint8Array<ArrayBuffer>
   }
 
   /**
