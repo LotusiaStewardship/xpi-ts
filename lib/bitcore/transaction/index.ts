@@ -21,3 +21,4 @@ export type {
   TransactionSignatureObject,
 } from './signature'
 export type { TransactionData, TransactionObject } from './transaction'
+export type { CoinbaseData, CoinbaseScriptSigData } from './transaction'

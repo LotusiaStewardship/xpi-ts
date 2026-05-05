@@ -34,6 +34,7 @@ import {
 } from './input'
 import { Output, OutputObject } from './output'
 import { Script } from '../script'
+import { ScriptNum } from '../script/interpreter/script-num'
 import { PrivateKey } from '../privatekey'
 import { PublicKey } from '../publickey'
 import { BN } from '../crypto/bn'
@@ -66,6 +67,38 @@ export interface TransactionObject {
   changeAsm?: string
   changeIndex?: number
   fee?: number
+}
+
+/**
+ * Parsed coinbase scriptSig data.
+ */
+export interface CoinbaseScriptSigData {
+  /** Raw scriptSig bytes */
+  raw: Buffer
+  /** Extra nonce (from CScriptNum at start, if present) */
+  extraNonce?: number
+  /** ASCII/UTF-8 strings found (e.g., "/EB13800.0/", pool names) */
+  asciiStrings: string[]
+  /** Best-guess pool/miner identifier */
+  poolTag?: string
+  /** Parsed as Script (for opcode-level access) */
+  script: Script
+}
+
+/**
+ * Complete coinbase transaction data.
+ */
+export interface CoinbaseData {
+  /** Parsed scriptSig data */
+  scriptSig: CoinbaseScriptSigData
+  /** COINBASE_PREFIX from first output (e.g., [0x6c, 0x6f, 0x67, 0x6f, 0x73]) */
+  prefix?: Buffer
+  /** Block height if encoded in first output */
+  height?: number
+  /** Miner's reward output (typically vout[1]) */
+  minerOutput?: Output
+  /** Additional OP_RETURN outputs (if any) */
+  dataOutputs: Output[]
 }
 
 // Constants
@@ -1652,6 +1685,59 @@ export class Transaction {
   }
 
   /**
+   * Extract coinbase transaction data.
+   *
+   * Parses:
+   * - scriptSig: Extra nonce, pool tags, and miner identification data
+   * - OP_RETURN output: COINBASE_PREFIX and block height
+   * - minerOutput: The reward output
+   *
+   * Reference: lotusd/src/miner.cpp CreateNewBlock(), IncrementExtraNonce()
+   *
+   * @returns CoinbaseData if this is a coinbase transaction, null otherwise
+   */
+  getCoinbaseData(): CoinbaseData | null {
+    if (!this.isCoinbase()) {
+      return null
+    }
+
+    const input = this.inputs[0]
+    const scriptSigData = this._parseCoinbaseScriptSig(input.scriptBuffer)
+
+    const result: CoinbaseData = {
+      scriptSig: scriptSigData,
+      dataOutputs: [],
+    }
+
+    // Parse first output (OP_RETURN with prefix + height)
+    const firstOutput = this.outputs[0]
+    if (firstOutput?.script.isDataOut()) {
+      const chunks = firstOutput.script.chunks
+      if (chunks[1]?.buf) {
+        result.prefix = chunks[1].buf
+      }
+      if (chunks[2]?.buf) {
+        // Use existing ScriptNum class — matches lotusd CScriptNum encoding
+        result.height = Number(ScriptNum.fromBuffer(chunks[2].buf).value)
+      }
+    }
+
+    // Miner reward output
+    if (this.outputs[1]) {
+      result.minerOutput = this.outputs[1]
+    }
+
+    // Additional OP_RETURN outputs
+    for (let i = 2; i < this.outputs.length; i++) {
+      if (this.outputs[i].script.isDataOut()) {
+        result.dataOutputs.push(this.outputs[i])
+      }
+    }
+
+    return result
+  }
+
+  /**
    * Add input without checking
    */
   uncheckedAddInput(input: Input): Transaction {
@@ -1666,6 +1752,144 @@ export class Transaction {
   }
 
   // Private helper methods
+
+  /**
+   * Parse coinbase scriptSig.
+   *
+   * Handles multiple formats:
+   * 1. lotusd standard: CScriptNum(extraNonce) + "/EB.../" ASCII
+   * 2. Custom pools: Arbitrary data pushes (e.g., "Lotusia Pool 🪷")
+   * 3. Legacy: OP_0 + padding bytes
+   *
+   * @param scriptSig - Raw scriptSig buffer
+   */
+  private _parseCoinbaseScriptSig(scriptSig: Buffer): CoinbaseScriptSigData {
+    const result: CoinbaseScriptSigData = {
+      raw: scriptSig,
+      asciiStrings: [],
+      script: Script.fromBuffer(scriptSig),
+    }
+
+    // Parse as Script to get structured chunks
+    const chunks = result.script.chunks
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i]
+      const op = chunk.opcodenum
+
+      // Skip OP_0 (often used as placeholder)
+      if (op === 0) {
+        continue
+      }
+
+      // Extract pushed data
+      if (chunk.buf) {
+        // Try to decode as UTF-8 string
+        const str = this._tryDecodeString(chunk.buf)
+        if (str) {
+          result.asciiStrings.push(str)
+        }
+
+        // Try to parse as CScriptNum (for extra nonce)
+        // Only consider first data push as potential extra nonce
+        if (i === 0 && chunk.buf.length <= 8) {
+          try {
+            // Use requireMinimal=false to handle non-minimal encodings
+            const scriptNum = ScriptNum.fromBuffer(chunk.buf, false)
+            const num = Number(scriptNum.value)
+            if (num >= 0) {
+              result.extraNonce = num
+            }
+          } catch {
+            // Not a valid ScriptNum, ignore
+          }
+        }
+      }
+    }
+
+    // Identify pool tag
+    result.poolTag = this._identifyPoolTag(result.asciiStrings)
+
+    return result
+  }
+
+  /**
+   * Try to decode buffer as string (UTF-8 or ASCII).
+   *
+   * @param buf - Buffer to decode
+   * @returns Decoded string if mostly printable, undefined otherwise
+   */
+  private _tryDecodeString(buf: Buffer): string | undefined {
+    if (buf.length < 2) {
+      return undefined
+    }
+
+    // Try UTF-8 first (handles emoji, etc.)
+    const str = buf.toString('utf8')
+    // Check if mostly printable
+    const printableRatio =
+      [...str].filter(c => {
+        const code = c.codePointAt(0) || 0
+        return code >= 32 || code === 10 || code === 13
+      }).length / str.length
+
+    if (printableRatio >= 0.8) {
+      return str.trim()
+    }
+
+    return undefined
+  }
+
+  /**
+   * Identify pool/miner tag from ASCII strings.
+   *
+   * Priority:
+   * 1. Excessive block size tag: "/EB.../"
+   * 2. Any "/.../" formatted string
+   * 3. First meaningful string (pool name)
+   *
+   * @param strings - Array of decoded strings
+   * @returns Best-guess pool tag or undefined
+   */
+  private _identifyPoolTag(strings: string[]): string | undefined {
+    // Priority 1: EB tag (lotusd standard)
+    for (const str of strings) {
+      if (str.startsWith('/EB') && str.endsWith('/')) {
+        return str
+      }
+    }
+
+    // Priority 2: Any slash-delimited tag
+    for (const str of strings) {
+      if (str.startsWith('/') && str.endsWith('/') && str.length > 2) {
+        return str
+      }
+    }
+
+    // Priority 3: First non-empty string
+    return strings.find(s => s.length >= 2)
+  }
+
+  /**
+   * Parse block height from coinbase output data.
+   * Uses existing ScriptNum class for CScriptNum compatibility.
+   *
+   * @param buf - Height data encoded as CScriptNum
+   * @returns Block height as number, or undefined if parsing fails
+   */
+  private _parseCoinbaseHeight(buf: Buffer): number | undefined {
+    if (buf.length === 0) {
+      return undefined
+    }
+
+    try {
+      const scriptNum = ScriptNum.fromBuffer(buf)
+      return Number(scriptNum.value)
+    } catch {
+      return undefined
+    }
+  }
+
   private _newOutputOrder(newOutputs: Output[]): Transaction {
     const isInvalidSorting =
       this.outputs.length !== newOutputs.length ||

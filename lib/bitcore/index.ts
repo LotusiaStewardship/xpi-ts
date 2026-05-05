@@ -212,6 +212,8 @@ export type {
   TransactionSignatureObject,
   TransactionData,
   TransactionObject,
+  CoinbaseData,
+  CoinbaseScriptSigData,
 } from './transaction/index.js'
 
 export type {
