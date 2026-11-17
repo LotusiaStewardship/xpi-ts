@@ -14,6 +14,7 @@ import { PrivateKey } from '../privatekey'
 import { PublicKey } from '../publickey'
 import { Transaction } from './transaction'
 import { Input } from './input'
+import { getSighashForkValue, withSighashForkValue } from './replayprotection'
 import type { Buffer } from 'buffer/'
 
 export interface TransactionLike {
@@ -55,6 +56,22 @@ const DEFAULT_SIGN_FLAGS_CONST = 1 << 16 // SCRIPT_ENABLE_SIGHASH_FORKID
  */
 function getForkId(): number {
   return 0 // In the UAHF, a fork id of 0 is used (see [4] REQ-6-2 NOTE 4)
+}
+
+/**
+ * Write an amount the way lotusd serializes an Amount: int64, little-endian
+ * (two's complement for the negative sentinel values some test vectors use).
+ */
+function writeAmount(writer: BufferWriter, satoshis: number): void {
+  writer.writeUInt64LEBigInt(BigInt.asUintN(64, BigInt(satoshis)))
+}
+
+/**
+ * Transaction version as the unsigned 32-bit pattern of lotusd's int32
+ * nVersion (2 when the transaction-like object has none).
+ */
+function txVersion(transaction: TransactionLike): number {
+  return (transaction.version === undefined ? 2 : transaction.version) >>> 0
 }
 
 /**
@@ -182,7 +199,7 @@ function sighashForLotus(
 
   // Spent output (value + script)
   const spentOutput = spentOutputs[inputNumber]
-  inputHashWriter.writeUInt64LEBN(new BN(spentOutput.satoshis))
+  writeAmount(inputHashWriter, spentOutput.satoshis)
   inputHashWriter.writeVarLengthBuffer(spentOutput.scriptBuffer)
 
   const inputHash = Hash.sha256sha256(inputHashWriter.toBuffer())
@@ -205,7 +222,7 @@ function sighashForLotus(
     // Calculate merkle root of all spent outputs
     const spentOutputHashes = spentOutputs.map(output => {
       const w = new BufferWriter()
-      w.writeUInt64LEBN(new BN(output.satoshis))
+      writeAmount(w, output.satoshis)
       w.writeVarLengthBuffer(output.scriptBuffer)
       return Hash.sha256sha256(w.toBuffer())
     })
@@ -217,7 +234,7 @@ function sighashForLotus(
       (sum, output) => sum + output.satoshis,
       0,
     )
-    writer.writeUInt64LEBN(new BN(totalInputAmount))
+    writeAmount(writer, totalInputAmount)
   }
 
   // 5. If ALL: total_output_amount (8 bytes little-endian)
@@ -226,11 +243,11 @@ function sighashForLotus(
       (sum, output) => sum + output.satoshis,
       0,
     )
-    writer.writeUInt64LEBN(new BN(totalOutputAmount))
+    writeAmount(writer, totalOutputAmount)
   }
 
-  // 6. Version
-  writer.writeUInt32LE(transaction.version || 2)
+  // 6. Version (int32 in lotusd; serialized as 4 bytes LE)
+  writer.writeUInt32LE(txVersion(transaction))
 
   // 7. If not ANYONECANPAY: inputs_merkle_root and inputs_merkle_height
   if (!(sighashType & Signature.SIGHASH_ANYONECANPAY)) {
@@ -323,8 +340,8 @@ function sighashForForkId(
 
   const writer = new BufferWriter()
 
-  // Version
-  writer.writeUInt32LE(transaction.version || 2)
+  // Version (int32 in lotusd; serialized as 4 bytes LE)
+  writer.writeUInt32LE(txVersion(transaction))
 
   // Input prevouts/nSequence (none/all, depending on flags)
   writer.write(hashPrevouts)
@@ -415,7 +432,7 @@ function sighashLegacy(
   writer.writeUInt32LE(transaction.nLockTime || 0)
 
   // Sighash type
-  writer.writeUInt32LE(sighashType)
+  writer.writeUInt32LE(sighashType >>> 0)
 
   return getHash(writer)
 }
@@ -462,10 +479,13 @@ function sighash(
     // Legacy chain's value for fork id must be of the form 0xffxxxx.
     // By xoring with 0xdead, we ensure that the value will be different
     // from the original one, even if it already starts with 0xff.
-    const forkValue = sighashType >> 8
+    // (lotusd src/script/interpreter.cpp SignatureHash). Unsigned shifts:
+    // the 32-bit sighash type does not fit a signed JS int32.
+    const forkValue = getSighashForkValue(sighashType)
     const newForkValue = 0xff0000 | (forkValue ^ 0xdead)
-    sighashType = (newForkValue << 8) | (sighashType & 0xff)
+    sighashType = withSighashForkValue(sighashType, newForkValue)
   }
+  sighashType = sighashType >>> 0
 
   // Determine which sighash algorithm to use based on algorithm bits (bits 5-6)
   const algorithmBits = sighashType & SIGHASH_ALGORITHM_MASK
@@ -563,7 +583,7 @@ function sighash(
   // Serialize the transaction
   const buf = new BufferWriter()
     .write(txcopy.toBuffer())
-    .writeInt32LE(sighashType >>> 0)
+    .writeUInt32LE(sighashType >>> 0)
     .toBuffer()
 
   const hash = Hash.sha256sha256(buf)
@@ -757,4 +777,4 @@ export const BITS_64_ON = BITS_64_ON_CONST
 /**
  * @namespace Signing
  */
-export { sighash, sign, verify }
+export { sighash, sign, verify, sighashForLotus }

@@ -136,6 +136,31 @@ export {
   Transaction,
 } from './transaction/index.js'
 
+// Replay protection (First Chronicles): sighash fork value for signers
+export {
+  SIGHASH_FORK_VALUE_DEFAULT,
+  SIGHASH_FORK_VALUE_REPLAY_PROTECTED,
+  REPLAY_PROTECTION_ACTIVATION_TIME,
+  isKnownSighashForkValue,
+  getSighashForkValue,
+  withSighashForkValue,
+  replayProtectionFlagsForForkValue,
+  getReplayProtectionActivationTime,
+  isReplayProtectionEnabledForNextBlock,
+  getNextBlockSighashForkValue,
+  REPLAY_PROTECTION_ACTIVATION_TIME_ENV,
+  REPLAY_PROTECTION_DEFAULT_MARGIN_SECONDS,
+  getReplayProtectionWindow,
+  isReplayProtectionRefusal,
+  getSighashForkValueForTransaction,
+} from './transaction/index.js'
+export type {
+  NextBlockForkValueArgs,
+  ReplayProtectionStatus,
+  ReplayProtectionWindowArgs,
+  TimeLockedTransactionLike,
+} from './transaction/index.js'
+
 // Sighash constants
 export {
   DEFAULT_SIGN_FLAGS,

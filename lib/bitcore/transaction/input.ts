@@ -42,6 +42,7 @@ import { Signature, SignatureSigningMethod } from '../crypto/signature'
 import { TransactionSignature } from './signature'
 import { Transaction } from './transaction'
 import { sign, verify, TransactionLike } from './sighash'
+import { withSighashForkValue } from './replayprotection'
 import {
   tweakPrivateKey,
   TAPROOT_SIGHASH_TYPE,
@@ -1018,7 +1019,8 @@ export class MultisigInput extends Input {
       .map(signature => {
         return BufferUtil.concat([
           signature.signature.toDER(signingMethod),
-          BufferUtil.from([signature.sigtype]),
+          // low byte only: the fork value is not serialized
+          BufferUtil.from([signature.sigtype & 0xff]),
         ])
       })
   }
@@ -1083,13 +1085,19 @@ export class MultisigInput extends Input {
             return true
           }
 
+          const parsedSig = Signature.fromTxFormat(signatureBuffer)
+          // The scriptSig only carries the low byte of the sighash type;
+          // the fork value comes from the transaction (replay protection).
           const signature = new TransactionSignature({
-            signature: Signature.fromTxFormat(signatureBuffer),
+            signature: parsedSig,
             publicKey: pubKey,
             prevTxId: input.prevTxId,
             outputIndex: input.outputIndex,
             inputIndex: inputIndex,
-            sigtype: Signature.SIGHASH_ALL,
+            sigtype: withSighashForkValue(
+              parsedSig.nhashtype ?? Signature.SIGHASH_ALL,
+              transaction.sighashForkValue ?? 0,
+            ),
           })
 
           signature.signature.nhashtype = signature.sigtype
@@ -1321,7 +1329,8 @@ export class MultisigScriptHashInput extends Input {
       .map(signature => {
         return BufferUtil.concat([
           signature!.signature.toDER(signingMethod),
-          BufferUtil.from([signature!.sigtype]),
+          // low byte only: the fork value is not serialized
+          BufferUtil.from([signature!.sigtype & 0xff]),
         ])
       })
   }

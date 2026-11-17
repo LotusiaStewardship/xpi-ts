@@ -10,6 +10,29 @@ export {
 export { Output } from './output'
 export { UnspentOutput } from './unspentoutput'
 export { sighash, sign, verify } from './sighash'
+export {
+  SIGHASH_FORK_VALUE_DEFAULT,
+  SIGHASH_FORK_VALUE_REPLAY_PROTECTED,
+  REPLAY_PROTECTION_ACTIVATION_TIME,
+  isKnownSighashForkValue,
+  getSighashForkValue,
+  withSighashForkValue,
+  replayProtectionFlagsForForkValue,
+  getReplayProtectionActivationTime,
+  isReplayProtectionEnabledForNextBlock,
+  getNextBlockSighashForkValue,
+  REPLAY_PROTECTION_ACTIVATION_TIME_ENV,
+  REPLAY_PROTECTION_DEFAULT_MARGIN_SECONDS,
+  getReplayProtectionWindow,
+  isReplayProtectionRefusal,
+  getSighashForkValueForTransaction,
+} from './replayprotection'
+export type {
+  NextBlockForkValueArgs,
+  ReplayProtectionStatus,
+  ReplayProtectionWindowArgs,
+  TimeLockedTransactionLike,
+} from './replayprotection'
 export { TransactionSignature } from './signature'
 export { Transaction } from './transaction'
 

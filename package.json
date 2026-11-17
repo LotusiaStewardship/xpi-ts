@@ -60,6 +60,7 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:replay-protection": "tsx --test test/transaction/replay-protection.test.ts",
     "prepublishOnly": "npm run build",
     "version": "npm run build",
     "postversion": "git push && git push --tags"

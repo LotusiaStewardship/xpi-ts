@@ -735,7 +735,11 @@ export class Signature {
     const defaultSighash = this.isSchnorr
       ? Signature.SIGHASH_ALL | Signature.SIGHASH_LOTUS
       : 0
-    buf.writeUInt8(this.nhashtype ?? defaultSighash, 0)
+    // Only the low byte of the sighash type goes on the wire. The upper 24
+    // bits (the fork value, e.g. 0xffdead after First Chronicles replay
+    // protection) are part of the sighash preimage only, exactly like
+    // lotusd (SigHashType::getRawSigHashType() & 0xff in the scriptSig).
+    buf.writeUInt8((this.nhashtype ?? defaultSighash) & 0xff, 0)
     return BufferUtil.concat([derbuf, buf])
   }
 

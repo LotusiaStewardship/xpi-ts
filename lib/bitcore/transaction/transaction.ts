@@ -43,6 +43,17 @@ import type { Point } from '../crypto/point'
 import { sighash as computeSighash } from './sighash'
 import { Interpreter } from '../script/interpreter'
 import { BufferUtil } from '../util'
+import {
+  SIGHASH_FORK_VALUE_DEFAULT,
+  getSighashForkValue,
+  getNextBlockSighashForkValue,
+  getReplayProtectionActivationTime,
+  getSighashForkValueForTransaction,
+  isKnownSighashForkValue,
+  replayProtectionFlagsForForkValue,
+  withSighashForkValue,
+} from './replayprotection'
+import type { NextBlockForkValueArgs } from './replayprotection'
 import type { Buffer } from 'buffer/'
 
 export interface TransactionData {
@@ -166,6 +177,11 @@ export class Transaction {
   private _feePerKb?: number
   private _feePerByte?: number
   private _hash?: string
+  /**
+   * Sighash fork value applied to every signature this transaction makes
+   * (0 before First Chronicles, 0xffdead after). See setSighashForkValue().
+   */
+  private _sighashForkValue: number = SIGHASH_FORK_VALUE_DEFAULT
   private _txid?: string
 
   /**
@@ -978,6 +994,87 @@ export class Transaction {
   }
 
   /**
+   * Sighash fork value used when signing (upper 24 bits of the 32-bit sighash
+   * type). 0 before the First Chronicles replay protection, 0xffdead after.
+   */
+  get sighashForkValue(): number {
+    return this._sighashForkValue
+  }
+
+  /**
+   * Set the sighash fork value every subsequent signature uses.
+   *
+   * After First Chronicles (tip MTP >= activation time) the node validates the
+   * next block with SCRIPT_ENABLE_REPLAY_PROTECTION, so signatures must be
+   * hashed with fork value 0xffdead. Use getNextBlockSighashForkValue() to
+   * pick the value from the chain state. Only the two values the node accepts
+   * (0 and 0xffdead) are allowed. The fork value is part of the sighash
+   * preimage only; the serialized signature still carries one byte.
+   *
+   * A sigtype passed explicitly to sign() that already carries a non-zero
+   * fork value keeps it.
+   *
+   * @example
+   * ```typescript
+   * const forkValue = getNextBlockSighashForkValue({
+   *   network: 'livenet',
+   *   tipMedianTimePast: blockchainInfo.mediantime,
+   * })
+   * tx.setSighashForkValue(forkValue).sign(privateKey)
+   * ```
+   */
+  setSighashForkValue(forkValue: number): Transaction {
+    if (!isKnownSighashForkValue(forkValue)) {
+      throw new BitcoreError(
+        `Unsupported sighash fork value ${forkValue} (expected 0 or 0xffdead)`,
+      )
+    }
+    this._sighashForkValue = forkValue
+    return this
+  }
+
+  /**
+   * Set the sighash fork value from the chain tip, read right before
+   * signing (`mediantime` of getblockchaininfo):
+   *
+   * - the next-block rule (getNextBlockSighashForkValue());
+   * - a timestamp-locked transaction (nLockTime >= 500000000, lock enforced
+   *   by a non-final input) with nLockTime >= activation time - 1 can only
+   *   be mined after the activation (BIP113), so it gets 0xffdead even
+   *   before the activation. Height locks are not mapped.
+   *
+   * On a broadcast refusal (isReplayProtectionRefusal()), read the tip
+   * again and re-sign once. See getReplayProtectionWindow() to warn or hold
+   * near the activation time.
+   *
+   * @example
+   * ```typescript
+   * const { mediantime } = await rpc('getblockchaininfo')
+   * tx.setSighashForkValueForTip({ tipMedianTimePast: mediantime }).sign(key)
+   * ```
+   */
+  setSighashForkValueForTip(args: NextBlockForkValueArgs): Transaction {
+    const next = getNextBlockSighashForkValue(args)
+    const activation = getReplayProtectionActivationTime(
+      args.network,
+      args.activationTime,
+    )
+    return this.setSighashForkValue(
+      getSighashForkValueForTransaction(this, next, activation),
+    )
+  }
+
+  /**
+   * Apply this transaction's fork value to a sighash type that has none.
+   */
+  private _applySighashForkValue(sigtype: number): number {
+    if (getSighashForkValue(sigtype) !== 0) {
+      return sigtype >>> 0
+    }
+    return withSighashForkValue(sigtype, this._sighashForkValue)
+  }
+
+  /**
    * Signs the transaction using the Schnorr signature algorithm with SIGHASH_LOTUS.
    *
    * This method is a convenience wrapper for signing Taproot and Lotus-native transactions,
@@ -1052,7 +1149,9 @@ export class Transaction {
       throw new Error(`Input ${inputIndex} is missing output information`)
     }
 
-    const sigtype = Signature.SIGHASH_ALL | Signature.SIGHASH_LOTUS
+    const sigtype = this._applySighashForkValue(
+      Signature.SIGHASH_ALL | Signature.SIGHASH_LOTUS,
+    )
 
     return computeSighash(
       this,
@@ -1207,6 +1306,9 @@ export class Transaction {
           inputSigtype = Signature.SIGHASH_ALL | Signature.SIGHASH_FORKID
         }
       }
+
+      // Replay protection: hash with the fork value of the next block
+      inputSigtype = this._applySighashForkValue(inputSigtype)
 
       const signatures = input.getSignatures(
         this,
@@ -1643,7 +1745,8 @@ export class Transaction {
             : Interpreter.SCRIPT_ENABLE_SIGHASH_FORKID |
               Interpreter.SCRIPT_VERIFY_CLEANSTACK |
               Interpreter.SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS |
-              Interpreter.SCRIPT_VERIFY_INPUT_SIGCHECKS
+              Interpreter.SCRIPT_VERIFY_INPUT_SIGCHECKS |
+              replayProtectionFlagsForForkValue(this._sighashForkValue)
 
         // Verify once and capture both result and error
         const interpreter = new Interpreter()

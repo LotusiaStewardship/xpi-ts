@@ -99,6 +99,65 @@ const tx = new Bitcore.Transaction()
 console.log('Transaction:', tx.serialize())
 ```
 
+### Replay protection (First Chronicles)
+
+Once the median time past (MTP) of the chain tip reaches the First Chronicles
+activation time (mainnet `1813587000`; testnet 21 days earlier, `1811772600`;
+regtest as mainnet unless the node runs with `-replayprotectionactivationtime`),
+the node validates the next block with replay protection: every signature must
+be hashed with sighash fork value `0xffdead` instead of `0`, and `0` is refused
+(before it, `0xffdead` is refused). The fork value is part of the sighash
+pre-image only; the signature in the scriptSig still carries one byte.
+
+An untouched `Transaction` signs with fork value `0`; the library never picks
+the value from the wall clock. Read the tip right before signing:
+
+```typescript
+import { Bitcore } from 'xpi-ts'
+
+async function signAndBroadcast(tx: Bitcore.Transaction) {
+  // `mediantime` from getblockchaininfo: fresh, never cached
+  let { mediantime } = await rpc('getblockchaininfo')
+  const status = Bitcore.getReplayProtectionWindow({ tipMedianTimePast: mediantime })
+  if (status.nearBoundary) {
+    // within an hour of the activation (either side): the fork value can
+    // flip before the transaction is mined. Warn the user, or hold.
+    console.warn(`replay protection activation in ${status.secondsToActivation}s`)
+  }
+  tx.setSighashForkValueForTip({ tipMedianTimePast: mediantime }).sign(privateKey)
+  try {
+    return await broadcast(tx.serialize())
+  } catch (err) {
+    if (!Bitcore.isReplayProtectionRefusal(err)) throw err
+    // the chain crossed the boundary meanwhile: read the tip and re-sign ONCE
+    ;({ mediantime } = await rpc('getblockchaininfo'))
+    tx.setSighashForkValueForTip({ tipMedianTimePast: mediantime }).sign(privateKey)
+    return broadcast(tx.serialize())
+  }
+}
+```
+
+`setSighashForkValueForTip({tipMedianTimePast, network, activationTime})`
+applies the next-block rule. A timestamp-locked transaction
+(`nLockTime >= 500000000`, at least one non-final input) with
+`nLockTime >= activation - 1` can only be mined after the activation (BIP113),
+so it is signed with `0xffdead` even before. Height locks are not mapped: sign
+them close to their height.
+
+Lower-level helpers:
+`getNextBlockSighashForkValue({network, tipMedianTimePast, activationTime})`,
+`getReplayProtectionWindow({tipMedianTimePast, network, activationTime,
+marginSeconds})`, `getSighashForkValueForTransaction(tx, nextBlockForkValue,
+activationTime)`, `isReplayProtectionRefusal(err)`,
+`tx.setSighashForkValue(forkValue)`, and `withSighashForkValue(type, forkValue)`
+for the low-level `sighash()` / `sign()` functions. Only `0` and `0xffdead` are
+accepted by `Transaction.setSighashForkValue()`.
+
+Activation time precedence: explicit `activationTime` argument > the
+environment variable `LOTUS_REPLAY_PROTECTION_ACTIVATION_TIME` (integer
+seconds, read only where `process` exists, for test setups) > the built-in
+chain parameter.
+
 ### HD Wallet (BIP32/BIP39)
 
 ```typescript
