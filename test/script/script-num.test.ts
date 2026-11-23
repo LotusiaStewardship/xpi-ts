@@ -145,7 +145,19 @@ describe('ScriptNum', () => {
     })
 
     it('should round-trip through fromBuffer', () => {
-      const values = [0n, 1n, -1n, 127n, 128n, -128n, 255n, 256n, -256n, 65535n, -65535n]
+      const values = [
+        0n,
+        1n,
+        -1n,
+        127n,
+        128n,
+        -128n,
+        255n,
+        256n,
+        -256n,
+        65535n,
+        -65535n,
+      ]
       for (const v of values) {
         const sn = new ScriptNum(v)
         const decoded = ScriptNum.fromBuffer(sn.toBuffer())
@@ -256,10 +268,7 @@ describe('ScriptNum', () => {
 
     it('should divide', () => {
       assert.strictEqual(new ScriptNum(10n).div(new ScriptNum(3n)).value, 3n)
-      assert.strictEqual(
-        new ScriptNum(-10n).div(new ScriptNum(3n)).value,
-        -3n,
-      )
+      assert.strictEqual(new ScriptNum(-10n).div(new ScriptNum(3n)).value, -3n)
     })
 
     it('should modulo', () => {
@@ -321,7 +330,7 @@ describe('ScriptNum', () => {
 
     it('should throw on overflow', () => {
       assert.throws(
-        () => new ScriptNum((1n << 62n)).mulpow2(new ScriptNum(2n)),
+        () => new ScriptNum(1n << 62n).mulpow2(new ScriptNum(2n)),
         (err: Error) => err instanceof ScriptNumError,
       )
     })

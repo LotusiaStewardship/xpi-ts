@@ -85,7 +85,11 @@ describe('evalScript', () => {
         assert.strictEqual(stack.length, 1)
         // OP_N pushes the ScriptNum encoding of N
         // For 1-16, this is a single byte [N]
-        assert.strictEqual(stack[0].length > 0, true, `OP_${i} should push non-empty`)
+        assert.strictEqual(
+          stack[0].length > 0,
+          true,
+          `OP_${i} should push non-empty`,
+        )
       }
     })
 
@@ -528,10 +532,7 @@ describe('evalScript', () => {
     })
 
     it('should fail on false', () => {
-      const { result } = runScript(
-        [Opcode.OP_VERIFY],
-        [Buffer.alloc(0)],
-      )
+      const { result } = runScript([Opcode.OP_VERIFY], [Buffer.alloc(0)])
       assert.strictEqual(result.success, false)
       assert.strictEqual(result.error, ScriptError.VERIFY)
     })
