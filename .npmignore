@@ -15,6 +15,7 @@ tsconfig.json
 .cursor/
 .output/
 node_modules/
+coverage/
 examples/
 test/
 tests/
@@ -24,6 +25,15 @@ docs/
 release.sh
 RELEASE.md
 .github/
+scripts/
+
+# Build and test configuration
+jest.config.js
+tsconfig.*.json
+eslint.config.mjs
+.prettierrc.json
+.prettierignore
+gulpfile.js
 
 # Test files
 *.test.js
@@ -40,12 +50,6 @@ dist/testing.d.ts
 dist/test-*.js
 dist/test-*.d.ts
 dist/eslint.config.*
-
-# Build configuration
-eslint.config.mjs
-.prettierrc.json
-.prettierignore
-gulpfile.js
 
 # Documentation (keep README.md)
 TAPROOT_*.md

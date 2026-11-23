@@ -69,6 +69,15 @@ $ npm install xpi-ts
 - Node.js >= 22
 - TypeScript >= 5.0 (for development)
 
+### Module formats
+
+The package ships an ESM build and a CommonJS build and selects one through
+its `exports` map. Bundlers (Vite, webpack, esbuild, Rollup) get the ESM
+build. Node.js gets the CommonJS build for both `import` and `require`,
+because the ESM build's extensionless relative imports and `buffer/`
+specifiers are not loadable by Node's ESM resolver. Named imports work from
+Node as well.
+
 ---
 
 ## Quick Start

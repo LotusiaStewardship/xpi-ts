@@ -8,36 +8,44 @@
   "exports": {
     ".": {
       "types": "./dist/types/index.d.ts",
+      "node": "./dist/cjs/index.js",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.js"
     },
+    "./package.json": "./package.json",
     "./lib/bitcore": {
       "types": "./dist/types/lib/bitcore/index.d.ts",
+      "node": "./dist/cjs/lib/bitcore/index.js",
       "import": "./dist/esm/lib/bitcore/index.js",
       "require": "./dist/cjs/lib/bitcore/index.js"
     },
     "./lib/bitcore/*": {
       "types": "./dist/types/lib/bitcore/*.d.ts",
+      "node": "./dist/cjs/lib/bitcore/*.js",
       "import": "./dist/esm/lib/bitcore/*.js",
       "require": "./dist/cjs/lib/bitcore/*.js"
     },
     "./lib/rank": {
       "types": "./dist/types/lib/rank/index.d.ts",
+      "node": "./dist/cjs/lib/rank/index.js",
       "import": "./dist/esm/lib/rank/index.js",
       "require": "./dist/cjs/lib/rank/index.js"
     },
     "./lib/rank/*": {
       "types": "./dist/types/lib/rank/*.d.ts",
+      "node": "./dist/cjs/lib/rank/*.js",
       "import": "./dist/esm/lib/rank/*.js",
       "require": "./dist/cjs/lib/rank/*.js"
     },
     "./lib/*": {
       "types": "./dist/types/lib/*.d.ts",
+      "node": "./dist/cjs/lib/*.js",
       "import": "./dist/esm/lib/*.js",
       "require": "./dist/cjs/lib/*.js"
     },
     "./utils/*": {
       "types": "./dist/types/utils/*.d.ts",
+      "node": "./dist/cjs/utils/*.js",
       "import": "./dist/esm/utils/*.js",
       "require": "./dist/cjs/utils/*.js"
     }
@@ -98,6 +106,7 @@
     "@types/elliptic": "6.4.18",
     "@types/jest": "^29.5.0",
     "@types/node": "24.0.10",
+    "esbuild": "0.27.2",
     "gulp": "5.0.1",
     "gulp-cli": "3.1.0",
     "jest": "^29.7.0",

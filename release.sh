@@ -173,7 +173,7 @@ if [ "$dry_run" -eq 1 ]; then
         echo "  commit:  Bump version to $new_version"
     fi
     echo "  tag:     $tag (annotated)"
-    echo "  preflight: format:check, lint, test, build, pack --dry-run"
+    echo "  preflight: format:check, lint, test, build, package smoke"
     if [ "$publish" -eq 1 ]; then
         echo "  publish: git push origin master $tag (triggers the OIDC workflow)"
     else
@@ -187,7 +187,7 @@ npm run format:check
 npm run lint
 npm test
 npm run build
-npm pack --dry-run >/dev/null
+./scripts/smoke-package.sh
 echo "Preflight passed."
 
 if [ "$new_version" != "$current_version" ]; then

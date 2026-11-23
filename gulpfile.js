@@ -86,7 +86,7 @@ async function validateExports() {
       continue
     }
 
-    for (const field of ['types', 'import', 'require']) {
+    for (const field of ['types', 'node', 'import', 'require']) {
       const candidate = entry[field]
       if (typeof candidate !== 'string') {
         continue
