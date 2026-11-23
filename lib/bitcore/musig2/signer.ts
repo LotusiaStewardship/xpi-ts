@@ -444,6 +444,9 @@ export class MuSig2Signer {
       inputIndex,
       prepare.script,
       satoshisBN,
+      transaction.signFlags(),
+      // MuSig2 on taproot spends the key path, which commits no execdata.
+      null,
     )
 
     // Normalize to 32 bytes
@@ -516,6 +519,9 @@ export class MuSig2Signer {
       inputIndex,
       prepare.script,
       satoshisBN,
+      transaction.signFlags(),
+      // MuSig2 on taproot spends the key path, which commits no execdata.
+      null,
     )
     const normalizedSighash = this._normalizeMessage(sighashBuffer)
 

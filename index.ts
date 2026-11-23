@@ -5,6 +5,7 @@
  */
 export * from './lib/rpc.js'
 export * as Bitcore from './lib/bitcore/index.js'
+export * from './lib/bitcore/chain.js'
 export * as LOKAD from './lib/lokad.js'
 export * from './utils/constants.js'
 export * from './utils/env.js'

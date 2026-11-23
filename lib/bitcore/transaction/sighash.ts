@@ -14,6 +14,7 @@ import { PrivateKey } from '../privatekey'
 import { PublicKey } from '../publickey'
 import { Transaction } from './transaction'
 import { Input } from './input'
+import { CHAIN_FORK_ID, CHAIN_FORK_ID_HEX, type ForkId } from '../chain'
 import type { Buffer } from 'buffer/'
 
 export interface TransactionLike {
@@ -35,6 +36,27 @@ export interface TransactionLike {
   nLockTime?: number
 }
 
+/**
+ * Execution context committed by SIGHASH_LOTUS.
+ *
+ * lotusd commits this for every signature checked inside a script: the plain
+ * script being executed (the scriptPubKey, or the redeem script for P2SH), or
+ * the tapleaf hash for a tapscript spend. Taproot key-path spends commit no
+ * execution data at all.
+ *
+ * When omitted, the hash of the subscript being signed is used, which is the
+ * consensus form for plain and P2SH spends. Pass `null` to commit no execution
+ * data (taproot key path).
+ *
+ * Reference: lotusd/src/script/script_exec_data.h
+ */
+export interface LotusExecutionData {
+  /** Double SHA256 of the executed script, or the tapleaf hash. */
+  executedScriptHash?: Buffer
+  /** Opcode position of the last executed OP_CODESEPARATOR. */
+  codeseparatorPos?: number
+}
+
 const SIGHASH_SINGLE_BUG_CONST =
   '0000000000000000000000000000000000000000000000000000000000000001'
 const BITS_64_ON_CONST = 'ffffffffffffffff'
@@ -49,13 +71,6 @@ const SIGHASH_ALGORITHM_MASK = Signature.SIGHASH_ALGORITHM_MASK
 
 // By default, we sign with sighash_forkid
 const DEFAULT_SIGN_FLAGS_CONST = 1 << 16 // SCRIPT_ENABLE_SIGHASH_FORKID
-
-/**
- * Get ForkId for UAHF
- */
-function getForkId(): number {
-  return 0 // In the UAHF, a fork id of 0 is used (see [4] REQ-6-2 NOTE 4)
-}
 
 /**
  * Calculate merkle root and height from an array of hashes
@@ -446,6 +461,7 @@ function sighash(
   subscript: Script,
   satoshisBN?: BN,
   flags?: number,
+  execData?: LotusExecutionData | null,
 ): Buffer {
   if (flags === undefined) {
     flags = DEFAULT_SIGN_FLAGS_CONST
@@ -459,12 +475,12 @@ function sighash(
 
   // Handle replay protection
   if (flags & Interpreter.SCRIPT_ENABLE_REPLAY_PROTECTION) {
-    // Legacy chain's value for fork id must be of the form 0xffxxxx.
-    // By xoring with 0xdead, we ensure that the value will be different
-    // from the original one, even if it already starts with 0xff.
-    const forkValue = sighashType >> 8
-    const newForkValue = 0xff0000 | (forkValue ^ 0xdead)
-    sighashType = (newForkValue << 8) | (sighashType & 0xff)
+    // Commit the signature to the Lotus chain fork id. Signatures made for
+    // another chain (including the old 0xffdead transform) are invalid here,
+    // and signatures made here are invalid there.
+    //
+    // Reference: lotusd/src/script/interpreter.cpp SignatureHash()
+    sighashType = (CHAIN_FORK_ID << 8) | (sighashType & 0xff)
   }
 
   // Determine which sighash algorithm to use based on algorithm bits (bits 5-6)
@@ -483,7 +499,29 @@ function sighash(
       )
     }
 
-    return sighashForLotus(txcopy, sighashType, inputNumber, spentOutputs)
+    // SIGHASH_LOTUS commits the executed script. Plain and P2SH spends commit
+    // the script being signed; tapscript spends commit the tapleaf hash; the
+    // taproot key path passes `null` and commits no execution data.
+    const lotusExecData =
+      execData === null
+        ? undefined
+        : {
+            executedScriptHash:
+              execData?.executedScriptHash ??
+              // lotusd hashes the executed script with its CHash256, which is
+              // double SHA256 in this tree.
+              Hash.sha256sha256(subscript.toBuffer()),
+            codeseparatorPos: execData?.codeseparatorPos ?? 0xffffffff,
+          }
+
+    return sighashForLotus(
+      txcopy,
+      sighashType,
+      inputNumber,
+      spentOutputs,
+      lotusExecData?.executedScriptHash,
+      lotusExecData?.codeseparatorPos,
+    )
   }
 
   // Check for SIGHASH_FORKID (algorithm bits == 0x40)
@@ -563,7 +601,7 @@ function sighash(
   // Serialize the transaction
   const buf = new BufferWriter()
     .write(txcopy.toBuffer())
-    .writeInt32LE(sighashType >>> 0)
+    .writeUInt32LE(sighashType >>> 0)
     .toBuffer()
 
   const hash = Hash.sha256sha256(buf)
@@ -592,6 +630,8 @@ function sighash(
  * @param satoshisBN - Value of the output being spent
  * @param flags - Script validation flags
  * @param signingMethod - 'ecdsa' (default) or 'schnorr'
+ * @param execData - SIGHASH_LOTUS execution context; omit for plain scripts,
+ *   pass `null` for the taproot key path
  * @returns Signature object with nhashtype set
  * @throws Error if SIGHASH_LOTUS is used without transaction.spentOutputs
  */
@@ -604,6 +644,7 @@ function sign(
   satoshisBN?: BN,
   flags?: number,
   signingMethod?: 'ecdsa' | 'schnorr',
+  execData?: LotusExecutionData | null,
 ): Signature {
   const hashbuf = sighash(
     transaction,
@@ -612,6 +653,7 @@ function sign(
     subscript,
     satoshisBN,
     flags,
+    execData,
   )
 
   signingMethod = signingMethod || 'ecdsa'
@@ -645,6 +687,8 @@ function sign(
  * @param satoshisBN - Value of the output being spent
  * @param flags - Script validation flags
  * @param signingMethod - 'ecdsa' (default) or 'schnorr'
+ * @param execData - SIGHASH_LOTUS execution context; omit for plain scripts,
+ *   pass `null` for the taproot key path
  * @returns true if signature is valid, false otherwise
  * @throws Error if SIGHASH_LOTUS is used without transaction.spentOutputs
  */
@@ -657,6 +701,7 @@ function verify(
   satoshisBN?: BN,
   flags?: number,
   signingMethod?: 'ecdsa' | 'schnorr',
+  execData?: LotusExecutionData | null,
 ): boolean {
   Preconditions.checkArgument(
     transaction !== undefined,
@@ -674,6 +719,7 @@ function verify(
     subscript,
     satoshisBN,
     flags,
+    execData,
   )
 
   signingMethod = signingMethod || 'ecdsa'
@@ -747,6 +793,38 @@ function GetOutputsHash(tx: TransactionLike, n?: number): Buffer {
  * Default sign flags
  */
 export const DEFAULT_SIGN_FLAGS = DEFAULT_SIGN_FLAGS_CONST
+
+/**
+ * Add the replay-protection flag that commits a signature to a fork id.
+ *
+ * Signing selects the fork id through the same script flag lotusd derives on
+ * verification, so a signature produced for one side of the activation
+ * boundary cannot verify on the other.
+ *
+ * @param forkId - Fork id the signature must commit to
+ * @param baseFlags - Script flags required by the signature algorithm
+ * @returns Script flags carrying the fork id
+ * @throws Error if the fork id cannot verify on this chain
+ */
+export function signFlagsForForkId(
+  forkId: ForkId,
+  baseFlags: number = DEFAULT_SIGN_FLAGS_CONST,
+): number {
+  if (forkId === 0) {
+    return baseFlags
+  }
+
+  if (forkId !== CHAIN_FORK_ID) {
+    // Unreachable for typed callers; JavaScript callers can pass any number.
+    const invalid = forkId as unknown as number
+    throw new Error(
+      `Invalid Lotus fork id 0x${invalid.toString(16)}: only 0 and ` +
+        `${CHAIN_FORK_ID_HEX} verify on this chain`,
+    )
+  }
+
+  return baseFlags | Interpreter.SCRIPT_ENABLE_REPLAY_PROTECTION
+}
 
 /**
  * Constants
