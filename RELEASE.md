@@ -36,7 +36,8 @@ running the preflight.
    there rather than at `git tag` avoids leaving an untagged bump commit on
    `master`.
 4. Runs the full preflight: `format:check`, `lint`, `test`, `build`, and
-   `npm pack --dry-run`.
+   `scripts/smoke-package.sh` (packs the tarball, installs it in a clean
+   directory, imports it as CJS and ESM, and bundles it for the browser).
 5. Updates every version-carrying file and fails if any of them does not
    end up carrying the new version.
 6. Commits as `Bump version to X.Y.Z` (skipped with `--current`).
@@ -84,12 +85,20 @@ The push runs `.github/workflows/release.yml`, which:
 
 - checks that the tag matches `package.json`;
 - installs from the lockfile and runs `format:check`, `lint`, `test`,
-  `build`, and `npm pack --dry-run`;
+  `build`, and the package smoke test;
 - publishes with `npm publish --provenance --access public`.
 
 No GitHub release is created: the tag and the npm version page are the
 record. The job needs `id-token: write` for OIDC. npm CLI 11.5.1 or newer
 is required; the workflow uses Node 24.
+
+## Pull request CI
+
+`.github/workflows/ci.yml` runs the same verification on every pull request
+and on pushes to `master`, against Node 22 (the engines floor) and Node 24
+(what the release workflow uses). It is the gate before a downstream wallet
+bumps its `xpi-ts` pin: the release workflow repeats the checks for a tag,
+but nothing reaches a tag without green CI on the pull request.
 
 ## Testing the pipeline without publishing
 
