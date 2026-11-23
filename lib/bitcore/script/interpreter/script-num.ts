@@ -123,7 +123,7 @@ export class ScriptNum {
     }
 
     // Trim trailing zero bytes, preserving sign
-    let last = data[data.length - 1]
+    const last = data[data.length - 1]
     if ((last & 0x7f) !== 0) {
       return data
     }

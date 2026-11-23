@@ -1287,7 +1287,7 @@ function executeCheckmultisig(
     return opcodeFailure(ScriptError.PUBKEY_COUNT)
   }
 
-  let updatedOpCount = nOpCount + nKeysCount
+  const updatedOpCount = nOpCount + nKeysCount
   if (updatedOpCount > MAX_OPS_PER_SCRIPT) {
     return opcodeFailure(ScriptError.OP_COUNT)
   }

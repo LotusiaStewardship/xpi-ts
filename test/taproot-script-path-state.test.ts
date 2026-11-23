@@ -25,6 +25,7 @@ import {
   TAPROOT_SIZE_WITHOUT_STATE,
   Interpreter,
 } from '../lib/bitcore/index.js'
+import { evalScript } from '../lib/bitcore/script/interpreter/interpreter.js'
 
 describe('Taproot Script Path Spending with State', () => {
   let privateKey: PrivateKey
@@ -176,32 +177,43 @@ describe('Taproot Script Path Spending with State', () => {
     assert.ok(verifyResult.stack![0].equals(state), 'State value should match')
 
     // Now execute the script with the state on the stack
-    const interpreter = new Interpreter({
-      script: verifyResult.scriptToExecute!,
-      stack: verifyResult.stack!,
-      flags: Interpreter.SCRIPT_VERIFY_NONE,
-    })
+    const execStack = verifyResult.stack!
+    const metrics = { sigChecks: 0 }
+    const execdata = {
+      codeseparatorPos: 0xffffffff,
+      executedScriptHash: Hash.sha256sha256(Buffer.alloc(0)),
+    }
+    const checker = {
+      verifySignature: () => false,
+      checkSignature: () => false,
+      checkLockTime: () => false,
+      checkSequence: () => false,
+    }
 
-    const evalResult = interpreter.evaluate()
+    const evalResult = evalScript(
+      execStack,
+      verifyResult.scriptToExecute!.toBuffer(),
+      Interpreter.SCRIPT_VERIFY_NONE,
+      checker,
+      metrics,
+      execdata,
+    )
     assert.strictEqual(
-      evalResult,
+      evalResult.success,
       true,
-      `Script should execute successfully with state, error: ${interpreter.errstr}`,
+      `Script should execute successfully with state, error: ${evalResult.error}`,
     )
 
     // After execution: OP_1 pushes 1 onto stack
     // Stack should have: [state, 1]
     assert.strictEqual(
-      interpreter.stack.length,
+      execStack.length,
       2,
-      `Stack should have 2 elements, but has ${interpreter.stack.length}`,
+      `Stack should have 2 elements, but has ${execStack.length}`,
     )
+    assert.ok(execStack[0].equals(state), 'State should still be on stack')
     assert.ok(
-      interpreter.stack[0].equals(state),
-      'State should still be on stack',
-    )
-    assert.ok(
-      Interpreter.castToBool(interpreter.stack[1]),
+      execStack[1].equals(Buffer.from([1])),
       'Top of stack should be true',
     )
   })

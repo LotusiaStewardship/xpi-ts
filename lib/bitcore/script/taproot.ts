@@ -491,7 +491,7 @@ export function verifyTaprootCommitment(
 
     // Calculate merkle root from control block
     const leafVersion = controlBlock[0] & TAPROOT_LEAF_MASK
-    let leafHash = calculateTapLeaf(script, leafVersion)
+    const leafHash = calculateTapLeaf(script, leafVersion)
     let merkleHash = leafHash
 
     // Process merkle path nodes

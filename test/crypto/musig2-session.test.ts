@@ -29,7 +29,12 @@ describe('MuSig2 Session Manager', () => {
 
       assert.ok(session.sessionId)
       assert.strictEqual(session.signers.length, 2)
-      assert.strictEqual(session.myIndex, 0)
+      assert.strictEqual(
+        session.myIndex,
+        session.signers.findIndex(
+          k => k.toString() === alice.publicKey.toString(),
+        ),
+      )
       assert.strictEqual(session.phase, MuSigSessionPhase.INIT)
       assert.ok(session.keyAggContext)
       assert.ok(session.keyAggContext.aggregatedPubKey)
@@ -48,7 +53,12 @@ describe('MuSig2 Session Manager', () => {
         message,
       )
 
-      assert.strictEqual(bobSession.myIndex, 1)
+      assert.strictEqual(
+        bobSession.myIndex,
+        bobSession.signers.findIndex(
+          k => k.toString() === bob.publicKey.toString(),
+        ),
+      )
     })
 
     it('should reject empty signers array', () => {
@@ -179,9 +189,9 @@ describe('MuSig2 Session Manager', () => {
       const bobNonces = manager.generateNonces(bobSession, bob)
 
       // Alice receives Bob's nonces
-      manager.receiveNonces(aliceSession, 1, bobNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
 
-      assert.ok(aliceSession.receivedPublicNonces.has(1))
+      assert.ok(aliceSession.receivedPublicNonces.has(bobSession.myIndex))
       assert.strictEqual(aliceSession.receivedPublicNonces.size, 1)
     })
 
@@ -205,7 +215,7 @@ describe('MuSig2 Session Manager', () => {
       const aliceNonces = manager.generateNonces(aliceSession, alice)
       const bobNonces = manager.generateNonces(bobSession, bob)
 
-      manager.receiveNonces(aliceSession, 1, bobNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
 
       assert.ok(aliceSession.aggregatedNonce)
       assert.ok(aliceSession.aggregatedNonce.R1)
@@ -227,7 +237,7 @@ describe('MuSig2 Session Manager', () => {
       const aliceNonces = manager.generateNonces(aliceSession, alice)
 
       assert.throws(() => {
-        manager.receiveNonces(aliceSession, 0, aliceNonces)
+        manager.receiveNonces(aliceSession, aliceSession.myIndex, aliceNonces)
       }, /Cannot receive nonce from self/)
     })
 
@@ -251,10 +261,10 @@ describe('MuSig2 Session Manager', () => {
       manager.generateNonces(aliceSession, alice)
       const bobNonces = manager.generateNonces(bobSession, bob)
 
-      manager.receiveNonces(aliceSession, 1, bobNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
 
       assert.throws(() => {
-        manager.receiveNonces(aliceSession, 1, bobNonces)
+        manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
       }, /Already received nonce/)
     })
 
@@ -282,7 +292,7 @@ describe('MuSig2 Session Manager', () => {
         message,
       )
       const bobNonces = manager.generateNonces(bobSession, bob)
-      manager.receiveNonces(aliceSession, 1, bobNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
 
       assert.ok(!manager.hasAllNonces(aliceSession))
 
@@ -292,7 +302,7 @@ describe('MuSig2 Session Manager', () => {
         message,
       )
       const carolNonces = manager.generateNonces(carolSession, carol)
-      manager.receiveNonces(aliceSession, 2, carolNonces)
+      manager.receiveNonces(aliceSession, carolSession.myIndex, carolNonces)
 
       assert.ok(manager.hasAllNonces(aliceSession))
     })
@@ -319,7 +329,7 @@ describe('MuSig2 Session Manager', () => {
       const aliceNonces = manager.generateNonces(aliceSession, alice)
       const bobNonces = manager.generateNonces(bobSession, bob)
 
-      manager.receiveNonces(aliceSession, 1, bobNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
 
       const alicePartialSig = manager.createPartialSignature(
         aliceSession,
@@ -353,7 +363,7 @@ describe('MuSig2 Session Manager', () => {
 
       manager.generateNonces(aliceSession, alice)
       const bobNonces = manager.generateNonces(bobSession, bob)
-      manager.receiveNonces(aliceSession, 1, bobNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
 
       assert.ok(aliceSession.mySecretNonce)
       manager.createPartialSignature(aliceSession, alice)
@@ -401,15 +411,19 @@ describe('MuSig2 Session Manager', () => {
       const aliceNonces = manager.generateNonces(aliceSession, alice)
       const bobNonces = manager.generateNonces(bobSession, bob)
 
-      manager.receiveNonces(aliceSession, 1, bobNonces)
-      manager.receiveNonces(bobSession, 0, aliceNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
+      manager.receiveNonces(bobSession, aliceSession.myIndex, aliceNonces)
 
       manager.createPartialSignature(aliceSession, alice)
       const bobPartialSig = manager.createPartialSignature(bobSession, bob)
 
-      manager.receivePartialSignature(aliceSession, 1, bobPartialSig)
+      manager.receivePartialSignature(
+        aliceSession,
+        bobSession.myIndex,
+        bobPartialSig,
+      )
 
-      assert.ok(aliceSession.receivedPartialSigs.has(1))
+      assert.ok(aliceSession.receivedPartialSigs.has(bobSession.myIndex))
     })
 
     it('should reject invalid partial signature', () => {
@@ -432,8 +446,8 @@ describe('MuSig2 Session Manager', () => {
       const aliceNonces = manager.generateNonces(aliceSession, alice)
       const bobNonces = manager.generateNonces(bobSession, bob)
 
-      manager.receiveNonces(aliceSession, 1, bobNonces)
-      manager.receiveNonces(bobSession, 0, aliceNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
+      manager.receiveNonces(bobSession, aliceSession.myIndex, aliceNonces)
 
       manager.createPartialSignature(aliceSession, alice)
       const bobPartialSig = manager.createPartialSignature(bobSession, bob)
@@ -442,7 +456,11 @@ describe('MuSig2 Session Manager', () => {
       const tamperedSig = bobPartialSig.add(new BN(1))
 
       assert.throws(() => {
-        manager.receivePartialSignature(aliceSession, 1, tamperedSig)
+        manager.receivePartialSignature(
+          aliceSession,
+          bobSession.myIndex,
+          tamperedSig,
+        )
       }, /Invalid partial signature/)
 
       // Session should be aborted
@@ -469,13 +487,17 @@ describe('MuSig2 Session Manager', () => {
       const aliceNonces = manager.generateNonces(aliceSession, alice)
       const bobNonces = manager.generateNonces(bobSession, bob)
 
-      manager.receiveNonces(aliceSession, 1, bobNonces)
-      manager.receiveNonces(bobSession, 0, aliceNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
+      manager.receiveNonces(bobSession, aliceSession.myIndex, aliceNonces)
 
       manager.createPartialSignature(aliceSession, alice)
       const bobPartialSig = manager.createPartialSignature(bobSession, bob)
 
-      manager.receivePartialSignature(aliceSession, 1, bobPartialSig)
+      manager.receivePartialSignature(
+        aliceSession,
+        bobSession.myIndex,
+        bobPartialSig,
+      )
 
       assert.strictEqual(aliceSession.phase, MuSigSessionPhase.COMPLETE)
       assert.ok(aliceSession.finalSignature)
@@ -506,8 +528,8 @@ describe('MuSig2 Session Manager', () => {
       const aliceNonces = manager.generateNonces(aliceSession, alice)
       const bobNonces = manager.generateNonces(bobSession, bob)
 
-      manager.receiveNonces(aliceSession, 1, bobNonces)
-      manager.receiveNonces(bobSession, 0, aliceNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
+      manager.receiveNonces(bobSession, aliceSession.myIndex, aliceNonces)
 
       // Round 2: Partial signatures
       const alicePartialSig = manager.createPartialSignature(
@@ -516,8 +538,16 @@ describe('MuSig2 Session Manager', () => {
       )
       const bobPartialSig = manager.createPartialSignature(bobSession, bob)
 
-      manager.receivePartialSignature(aliceSession, 1, bobPartialSig)
-      manager.receivePartialSignature(bobSession, 0, alicePartialSig)
+      manager.receivePartialSignature(
+        aliceSession,
+        bobSession.myIndex,
+        bobPartialSig,
+      )
+      manager.receivePartialSignature(
+        bobSession,
+        aliceSession.myIndex,
+        alicePartialSig,
+      )
 
       // Get final signatures
       const aliceFinalSig = manager.getFinalSignature(aliceSession)
@@ -557,12 +587,12 @@ describe('MuSig2 Session Manager', () => {
       const carolNonces = manager.generateNonces(carolSession, carol)
 
       // Everyone exchanges nonces
-      manager.receiveNonces(aliceSession, 1, bobNonces)
-      manager.receiveNonces(aliceSession, 2, carolNonces)
-      manager.receiveNonces(bobSession, 0, aliceNonces)
-      manager.receiveNonces(bobSession, 2, carolNonces)
-      manager.receiveNonces(carolSession, 0, aliceNonces)
-      manager.receiveNonces(carolSession, 1, bobNonces)
+      manager.receiveNonces(aliceSession, bobSession.myIndex, bobNonces)
+      manager.receiveNonces(aliceSession, carolSession.myIndex, carolNonces)
+      manager.receiveNonces(bobSession, aliceSession.myIndex, aliceNonces)
+      manager.receiveNonces(bobSession, carolSession.myIndex, carolNonces)
+      manager.receiveNonces(carolSession, aliceSession.myIndex, aliceNonces)
+      manager.receiveNonces(carolSession, bobSession.myIndex, bobNonces)
 
       // Round 2: Partial signatures
       const alicePartialSig = manager.createPartialSignature(
@@ -576,12 +606,36 @@ describe('MuSig2 Session Manager', () => {
       )
 
       // Everyone exchanges partial sigs
-      manager.receivePartialSignature(aliceSession, 1, bobPartialSig)
-      manager.receivePartialSignature(aliceSession, 2, carolPartialSig)
-      manager.receivePartialSignature(bobSession, 0, alicePartialSig)
-      manager.receivePartialSignature(bobSession, 2, carolPartialSig)
-      manager.receivePartialSignature(carolSession, 0, alicePartialSig)
-      manager.receivePartialSignature(carolSession, 1, bobPartialSig)
+      manager.receivePartialSignature(
+        aliceSession,
+        bobSession.myIndex,
+        bobPartialSig,
+      )
+      manager.receivePartialSignature(
+        aliceSession,
+        carolSession.myIndex,
+        carolPartialSig,
+      )
+      manager.receivePartialSignature(
+        bobSession,
+        aliceSession.myIndex,
+        alicePartialSig,
+      )
+      manager.receivePartialSignature(
+        bobSession,
+        carolSession.myIndex,
+        carolPartialSig,
+      )
+      manager.receivePartialSignature(
+        carolSession,
+        aliceSession.myIndex,
+        alicePartialSig,
+      )
+      manager.receivePartialSignature(
+        carolSession,
+        bobSession.myIndex,
+        bobPartialSig,
+      )
 
       // All should have same final signature
       const aliceFinalSig = manager.getFinalSignature(aliceSession)
@@ -632,7 +686,7 @@ describe('MuSig2 Session Manager', () => {
         message,
       )
       const bobNonces = manager.generateNonces(bobSession, bob)
-      manager.receiveNonces(session, 1, bobNonces)
+      manager.receiveNonces(session, bobSession.myIndex, bobNonces)
 
       status = manager.getSessionStatus(session)
       assert.strictEqual(status.noncesCollected, 2)
