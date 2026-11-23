@@ -20,6 +20,11 @@ test/
 tests/
 docs/
 
+# Release tooling
+release.sh
+RELEASE.md
+.github/
+
 # Test files
 *.test.js
 *.test.ts

@@ -60,9 +60,7 @@
     "test": "tsx --test 'test/**/*.test.ts'",
     "test:watch": "tsx --test --watch 'test/**/*.test.ts'",
     "test:coverage": "tsx --test --experimental-test-coverage 'test/**/*.test.ts'",
-    "prepublishOnly": "npm run build",
-    "version": "npm run build",
-    "postversion": "git push && git push --tags"
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=22.0.0"

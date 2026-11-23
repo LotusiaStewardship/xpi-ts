@@ -1,0 +1,66 @@
+name: Release
+
+# Publishing uses npm trusted publishing (OIDC), so it only runs for a tag
+# pushed by release.sh. A manual dispatch is a rehearsal: it verifies and
+# packs the tree but never publishes. No GitHub release is created.
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          package="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$package" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json $package"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Pack
+        run: npm pack --dry-run
+
+      - name: Publish to npm
+        if: startsWith(github.ref, 'refs/tags/')
+        run: npm publish --provenance --access public
+
+      - name: Rehearsal summary
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "Manual run: verified and packed only. A v*.*.* tag publishes."
