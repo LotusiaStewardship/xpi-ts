@@ -1287,7 +1287,7 @@ function executeCheckmultisig(
     return opcodeFailure(ScriptError.PUBKEY_COUNT)
   }
 
-  let updatedOpCount = nOpCount + nKeysCount
+  const updatedOpCount = nOpCount + nKeysCount
   if (updatedOpCount > MAX_OPS_PER_SCRIPT) {
     return opcodeFailure(ScriptError.OP_COUNT)
   }
@@ -1898,15 +1898,16 @@ function isPayToScriptHash(scriptBuf: Buffer): boolean {
 /**
  * Create a ScriptExecutionData for a given script.
  *
+ * The executed-script hash is double SHA256: this tree's CHash256 finalizes
+ * twice, matching lotusd's ScriptExecutionData constructor.
+ *
  * @param script - The script bytes to hash
  * @returns Initialized execution data
  */
 function makeExecdata(script: Buffer): ScriptExecutionData {
   return {
     codeseparatorPos: 0xffffffff,
-    executedScriptHash: Hash.sha256sha256(
-      script.length > 0 ? script : BufferUtil.alloc(0),
-    ),
+    executedScriptHash: Hash.sha256sha256(script),
   }
 }
 
@@ -2061,6 +2062,13 @@ class TransactionSignatureChecker implements SignatureChecker {
           ? BN.fromNumber(Number(this.satoshis))
           : undefined,
         flags,
+        // No execdata means the taproot key path, which commits none.
+        execdata === undefined
+          ? null
+          : {
+              executedScriptHash: execdata.executedScriptHash,
+              codeseparatorPos: execdata.codeseparatorPos,
+            },
       )
 
       return this.verifySignature(rawSig, publicKey, sighashBuf)

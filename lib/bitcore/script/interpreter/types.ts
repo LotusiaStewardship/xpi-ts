@@ -228,7 +228,7 @@ export interface ScriptExecutionMetrics {
 export interface ScriptExecutionData {
   /** Opcode position of the last executed OP_CODESEPARATOR */
   codeseparatorPos: number
-  /** SHA-256d of the complete script being executed */
+  /** SHA-256d of the complete script being executed (tapleaf hash in tapscripts) */
   executedScriptHash: Buffer
 }
 

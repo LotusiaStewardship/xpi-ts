@@ -19,6 +19,12 @@ import { BufferWriter } from '../encoding/bufferwriter'
 import { Hash } from '../crypto/hash'
 import { Signature, SignatureSigningMethod } from '../crypto/signature'
 import { verify, TransactionLike } from './sighash'
+import {
+  DEFAULT_SIGN_FLAGS,
+  signFlagsForForkId,
+  sighash as computeSighash,
+  type LotusExecutionData,
+} from './sighash'
 import { BitcoreError } from '../errors'
 import { Address } from '../address'
 import { UnspentOutput, UnspentOutputData } from './unspentoutput'
@@ -40,9 +46,9 @@ import { PublicKey } from '../publickey'
 import { BN } from '../crypto/bn'
 import { TransactionSignature } from './signature'
 import type { Point } from '../crypto/point'
-import { sighash as computeSighash } from './sighash'
 import { Interpreter } from '../script/interpreter'
 import { BufferUtil } from '../util'
+import { resolveForkId, type ForkId, type ForkIdPolicy } from '../chain'
 import type { Buffer } from 'buffer/'
 
 export interface TransactionData {
@@ -158,6 +164,21 @@ export class Transaction {
   outputs: Output[] = []
   _version: number = CURRENT_VERSION
   nLockTime: number = DEFAULT_NLOCKTIME
+
+  /**
+   * Fork id policy for signatures this transaction produces.
+   *
+   * - `'auto'` (default) signs with fork id 0 until the mainnet replay
+   *   protection activation passes, then with `CHAIN_FORK_ID`.
+   * - `0` forces pre-activation signatures (regtest, unit tests).
+   * - `CHAIN_FORK_ID` forces post-activation signatures (post-boundary
+   *   wallets, callers that know the chain's median time past).
+   *
+   * The fork id is implicit in the signature, so it is never serialized with
+   * the transaction.
+   */
+  forkId: ForkIdPolicy = 'auto'
+
   private _inputAmount?: number
   private _outputAmount?: number
   private _changeScript?: Script
@@ -211,6 +232,9 @@ export class Transaction {
    */
   static shallowCopy(transaction: Transaction): Transaction {
     const copy = new Transaction(transaction.toBuffer())
+    // The fork id is signing policy, not transaction data, but a copy that
+    // silently reverted to 'auto' would change what its signatures commit to.
+    copy.forkId = transaction.forkId
     return copy
   }
 
@@ -922,10 +946,36 @@ export class Transaction {
   }
 
   /**
+   * The fork id this transaction's signatures commit to.
+   *
+   * Applies the {@link forkId} policy; `'auto'` follows the mainnet
+   * replay-protection activation.
+   *
+   * @param unixSeconds - Time used by the automatic policy (defaults to now)
+   * @returns The resolved fork id
+   */
+  getForkId(unixSeconds?: number): ForkId {
+    return resolveForkId(this.forkId, unixSeconds)
+  }
+
+  /**
+   * Script flags that carry this transaction's fork id.
+   *
+   * @param baseFlags - Script flags required by the signature algorithm
+   * @returns Script flags for signing and verification
+   */
+  signFlags(baseFlags: number = DEFAULT_SIGN_FLAGS): number {
+    return signFlagsForForkId(this.getForkId(), baseFlags)
+  }
+
+  /**
    * Sign transaction
    *
    * Signs all inputs that can be signed with the provided private key(s).
    * Supports multiple signature hash types including SIGHASH_LOTUS.
+   *
+   * Signatures commit to the fork id selected by {@link forkId}; the default
+   * `'auto'` policy follows the 2nd Kings replay-protection activation.
    *
    * Sighash Types:
    * - SIGHASH_ALL | SIGHASH_FORKID (default): Signs all inputs and outputs
@@ -1060,6 +1110,9 @@ export class Transaction {
       inputIndex,
       input.output.script,
       new BN(input.output.satoshis),
+      this.signFlags(),
+      // MuSig2 on taproot spends the key path, which commits no execdata.
+      null,
     )
   }
 
@@ -1257,6 +1310,7 @@ export class Transaction {
     satoshisBN: BN,
     flags?: number,
     signingMethod?: string,
+    execData?: LotusExecutionData | null,
   ): boolean {
     return verify(
       this as TransactionLike,
@@ -1265,8 +1319,9 @@ export class Transaction {
       nin,
       subscript,
       satoshisBN,
-      flags,
+      flags === undefined ? this.signFlags() : flags,
       signingMethod as 'ecdsa' | 'schnorr' | undefined,
+      execData,
     )
   }
 
@@ -1640,10 +1695,12 @@ export class Transaction {
         const verifyFlags =
           flags !== undefined
             ? flags
-            : Interpreter.SCRIPT_ENABLE_SIGHASH_FORKID |
-              Interpreter.SCRIPT_VERIFY_CLEANSTACK |
-              Interpreter.SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS |
-              Interpreter.SCRIPT_VERIFY_INPUT_SIGCHECKS
+            : this.signFlags(
+                Interpreter.SCRIPT_ENABLE_SIGHASH_FORKID |
+                  Interpreter.SCRIPT_VERIFY_CLEANSTACK |
+                  Interpreter.SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS |
+                  Interpreter.SCRIPT_VERIFY_INPUT_SIGCHECKS,
+              )
 
         // Verify once and capture both result and error
         const interpreter = new Interpreter()

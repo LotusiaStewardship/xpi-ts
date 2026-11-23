@@ -46,6 +46,7 @@ import {
   tweakPrivateKey,
   TAPROOT_SIGHASH_TYPE,
   extractTaprootCommitment,
+  calculateTapLeaf,
 } from '../script/taproot'
 import type {
   MuSig2KeyAggContext,
@@ -625,7 +626,7 @@ export class Input {
               index,
               this.output!.script,
               new BN(this.output!.satoshis.toString()),
-              undefined,
+              transaction.signFlags(),
               signingMethod as 'ecdsa' | 'schnorr',
             ),
             sigtype: sigtype,
@@ -650,7 +651,7 @@ export class Input {
               index,
               this.output!.script,
               new BN(this.output!.satoshis.toString()),
-              undefined,
+              transaction.signFlags(),
               signingMethod as 'ecdsa' | 'schnorr',
             ),
             sigtype: sigtype,
@@ -730,7 +731,7 @@ export class Input {
       signature.inputIndex,
       this.output!.script,
       new BN(this.output!.satoshis.toString()),
-      undefined,
+      transaction.signFlags(),
       signingMethod as 'ecdsa' | 'schnorr',
     )
   }
@@ -959,7 +960,7 @@ export class MultisigInput extends Input {
               index,
               this.output!.script,
               new BN(this.output!.satoshis.toString()),
-              undefined,
+              transaction.signFlags(),
               signingMethod as 'ecdsa' | 'schnorr',
             ),
             sigtype: sigtype,
@@ -1062,7 +1063,7 @@ export class MultisigInput extends Input {
       signature.inputIndex,
       this.output!.script,
       new BN(this.output!.satoshis.toString()),
-      undefined,
+      transaction.signFlags(),
       signingMethod as 'ecdsa' | 'schnorr',
     )
   }
@@ -1100,7 +1101,7 @@ export class MultisigInput extends Input {
             signature.inputIndex,
             input.output!.script,
             new BN(input.output!.satoshis.toString()),
-            undefined,
+            transaction.signFlags(),
             signingMethod as 'ecdsa' | 'schnorr',
           )
 
@@ -1260,7 +1261,7 @@ export class MultisigScriptHashInput extends Input {
               index,
               this.redeemScript,
               new BN(this.output!.satoshis.toString()),
-              undefined,
+              transaction.signFlags(),
               signingMethod as 'ecdsa' | 'schnorr' | undefined,
             ),
             sigtype: sigtype,
@@ -1366,7 +1367,7 @@ export class MultisigScriptHashInput extends Input {
       signature.inputIndex,
       this.redeemScript,
       new BN(this.output!.satoshis.toString()),
-      undefined,
+      transaction.signFlags(),
       signingMethod as 'ecdsa' | 'schnorr' | undefined,
     )
   }
@@ -1436,7 +1437,7 @@ export class PublicKeyInput extends Input {
             index,
             this.output!.script,
             new BN(this.output!.satoshis.toString()),
-            undefined,
+            transaction.signFlags(),
             signingMethod as 'ecdsa' | 'schnorr',
           ),
           sigtype: sigtype,
@@ -1525,7 +1526,7 @@ export class PublicKeyHashInput extends Input {
             index,
             this.output!.script,
             new BN(this.output!.satoshis.toString()),
-            undefined,
+            transaction.signFlags(),
             signingMethod as 'ecdsa' | 'schnorr' | undefined,
           ),
           sigtype: sigtype,
@@ -1730,8 +1731,10 @@ export class TaprootInput extends Input {
       index,
       this.output!.script,
       new BN(this.output!.satoshis.toString()),
-      undefined,
+      transaction.signFlags(),
       signingMethod,
+      // Key-path spends commit no execution data.
+      null,
     )
 
     return [
@@ -1756,15 +1759,18 @@ export class TaprootInput extends Input {
     sigtype: number,
     signingMethod: 'ecdsa' | 'schnorr',
   ): TransactionSignature[] {
+    const execScript = this.tapScript || this.output!.script
     const signature = sign(
       transaction as unknown as TransactionLike,
       privateKey,
       sigtype,
       index,
-      this.tapScript || this.output!.script,
+      execScript,
       new BN(this.output!.satoshis.toString()),
-      undefined,
+      transaction.signFlags(),
       signingMethod,
+      // Script-path spends commit the tapleaf hash as execution data.
+      { executedScriptHash: calculateTapLeaf(execScript) },
     )
 
     return [
@@ -1836,14 +1842,22 @@ export class TaprootInput extends Input {
       return false
     }
 
+    // Match the spending path: key-path signatures commit no execution data,
+    // script-path signatures commit the tapleaf hash.
+    const isKeyPath = this.isKeyPathOnly()
+    const execScript = isKeyPath
+      ? this.output!.script
+      : this.tapScript || this.output!.script
+
     return transaction.verifySignature(
       signature.signature,
       signature.publicKey,
       signature.inputIndex,
-      this.output!.script,
+      execScript,
       new BN(this.output!.satoshis),
-      undefined,
+      transaction.signFlags(),
       signingMethod,
+      isKeyPath ? null : { executedScriptHash: calculateTapLeaf(execScript) },
     )
   }
 

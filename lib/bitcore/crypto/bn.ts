@@ -284,7 +284,7 @@ class BNWrapper {
    * @returns Buffer containing the BN value in the specified format
    */
   toBuffer(opts?: BNWrapperOptions): Buffer {
-    let hex = this._bn.toString('hex', 2)
+    const hex = this._bn.toString('hex', 2)
     let buf = BufferUtil.from(hex, 'hex')
 
     if (opts?.size) {

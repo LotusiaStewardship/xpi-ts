@@ -3,6 +3,19 @@
  * All modules migrated from bitcore-lib-xpi with ESM and BigInt support
  */
 
+// Chain identity and the replay-protection fork id
+export {
+  CHAIN_FORK_ID,
+  CHAIN_FORK_ID_HEX,
+  REPLAY_PROTECTION_ACTIVATION_TIME,
+  TESTNET_REPLAY_PROTECTION_ACTIVATION_TIME,
+  REPLAY_PROTECTION_ACTIVATION_MARGIN,
+  chainForkIdAt,
+  resolveForkId,
+  type ForkId,
+  type ForkIdPolicy,
+} from './chain.js'
+
 // Crypto modules
 export { Hash } from './crypto/hash.js'
 export { Random } from './crypto/random.js'
@@ -127,6 +140,7 @@ export {
   PublicKeyInput,
   PublicKeyHashInput,
   TaprootInput,
+  MuSig2TaprootInput,
   Output,
   UnspentOutput,
   sighash,
@@ -269,4 +283,7 @@ export type { URIParams } from './uri.js'
 
 export type { UnitData } from './unit.js'
 
-export type { TransactionLike } from './transaction/sighash.js'
+export type {
+  LotusExecutionData,
+  TransactionLike,
+} from './transaction/sighash.js'

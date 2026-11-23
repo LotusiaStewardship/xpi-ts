@@ -23,6 +23,10 @@ A comprehensive TypeScript library providing Bitcoin-like transaction primitives
 - **MuSig2** - Multi-signature Schnorr signatures (BIP327)
   - 2-round non-interactive signing
   - Privacy-preserving multisig (indistinguishable from single-sig)
+- **Replay protection** - Chain-specific `SIGHASH` fork id
+  - `CHAIN_FORK_ID = 0x4c4f54` committed by BIP143, `SIGHASH_LOTUS` and taproot
+  - Automatic switch at the 2nd Kings activation, with an explicit override
+  - Pre-activation mode for regtest and tests
 - **Taproot** - Pay-to-Taproot address support
   - Script path spending
   - Key path spending
@@ -98,6 +102,60 @@ const tx = new Bitcore.Transaction()
 
 console.log('Transaction:', tx.serialize())
 ```
+
+### Replay Protection (2nd Kings Fork ID)
+
+Lotus commits every signature to a chain-specific fork id once replay
+protection activates at the 2nd Kings boundary (MTP `1797886200`,
+2026-12-21 20:50 UTC). The fork id is implicit in the signature — it is not
+carried in the transaction — so it only needs to be selected when signing.
+
+`Transaction.forkId` selects it:
+
+- `'auto'` (default) signs with fork id 0 until the activation plus a
+  30-minute safety margin, then with `CHAIN_FORK_ID`. Consumers that only
+  bump the package get the right value on both sides of the split.
+- `CHAIN_FORK_ID` forces post-activation signatures. Use it when signing
+  from knowledge of the chain's median time past, or for PSBT coordination.
+- `0` forces pre-activation signatures. Use it for regtest and unit tests.
+
+```typescript
+import { Bitcore, CHAIN_FORK_ID } from 'xpi-ts'
+
+const tx = new Bitcore.Transaction()
+  .from(unspentOutput)
+  .to(recipientAddress, 100_000_000)
+  .change(changeAddress)
+
+// Default: follows the 2nd Kings activation automatically.
+tx.sign(privateKey)
+
+// Explicit: an integration test or a caller that knows the chain state.
+tx.forkId = CHAIN_FORK_ID
+tx.sign(privateKey)
+
+// Pre-activation, e.g. against a regtest node with replay protection off.
+tx.forkId = 0
+tx.sign(privateKey)
+```
+
+`tx.getForkId(unixSeconds?)` resolves the policy, and `tx.signFlags(base?)`
+returns the script flags carrying it. The same value applies to BIP143,
+`SIGHASH_LOTUS`, and taproot key-path and script-path signatures.
+
+Two cases need an explicit value:
+
+- **Testnet** activates 21 days before mainnet. `'auto'` follows the mainnet
+  boundary, so testnet callers should pin `tx.forkId` or compute the value
+  with `chainForkIdAt(now, TESTNET_REPLAY_PROTECTION_ACTIVATION_TIME)`.
+- **Coordinated signing** (MuSig2, PSBT, multiple devices) must agree on the
+  value. Set `tx.forkId` once and share it with the other signers instead of
+  letting each side resolve `'auto'` independently.
+
+Signatures created before activation stop verifying at the boundary, so
+pending transactions need re-signing. A signature made for Lotus is invalid
+on a chain using a different fork id, and one made for another chain is
+invalid on Lotus.
 
 ### HD Wallet (BIP32/BIP39)
 
@@ -406,11 +464,11 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (Node test runner via tsx)
 npm test
 
-# Run specific test suite
-npm test -- test/crypto/musig2/
+# Run a specific test file
+npx tsx --test test/transaction/replay-protection.test.ts
 
 # Run with coverage
 npm run test:coverage

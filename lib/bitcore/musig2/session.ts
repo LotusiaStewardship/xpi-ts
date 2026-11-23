@@ -625,7 +625,11 @@ export class MuSigSessionManager {
     )
     const messageHash = Hash.sha256(message)
     const timestampBuffer = BufferUtil.alloc(8)
-    timestampBuffer.writeBigInt64BE(createdAt, 0)
+    // Big-endian milliseconds. Written as two words because the buffer
+    // typings do not accept a bigint for writeBigInt64BE.
+    const createdAtMs = BigInt(createdAt)
+    timestampBuffer.writeUInt32BE(Number(createdAtMs >> 32n), 0)
+    timestampBuffer.writeUInt32BE(Number(createdAtMs & 0xffffffffn), 4)
     const combined = BufferUtil.concat([
       signersHash,
       messageHash,
