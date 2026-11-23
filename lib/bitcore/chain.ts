@@ -65,8 +65,10 @@ export type ForkId = 0 | typeof CHAIN_FORK_ID
 /**
  * How a signer chooses its fork id.
  *
- * `'auto'` follows the mainnet activation; a number pins the value so tests,
- * regtest nodes and callers that know the chain's median time past are exact.
+ * `'auto'` follows the mainnet activation. A number pins the value, which
+ * tests, regtest nodes, testnet callers and anyone who knows the chain's
+ * median time past should use; `'auto'` does not know about testnet's earlier
+ * activation.
  */
 export type ForkIdPolicy = 'auto' | ForkId
 

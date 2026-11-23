@@ -23,6 +23,10 @@ A comprehensive TypeScript library providing Bitcoin-like transaction primitives
 - **MuSig2** - Multi-signature Schnorr signatures (BIP327)
   - 2-round non-interactive signing
   - Privacy-preserving multisig (indistinguishable from single-sig)
+- **Replay protection** - Chain-specific `SIGHASH` fork id
+  - `CHAIN_FORK_ID = 0x4c4f54` committed by BIP143, `SIGHASH_LOTUS` and taproot
+  - Automatic switch at the 2nd Kings activation, with an explicit override
+  - Pre-activation mode for regtest and tests
 - **Taproot** - Pay-to-Taproot address support
   - Script path spending
   - Key path spending
@@ -138,6 +142,15 @@ tx.sign(privateKey)
 `tx.getForkId(unixSeconds?)` resolves the policy, and `tx.signFlags(base?)`
 returns the script flags carrying it. The same value applies to BIP143,
 `SIGHASH_LOTUS`, and taproot key-path and script-path signatures.
+
+Two cases need an explicit value:
+
+- **Testnet** activates 21 days before mainnet. `'auto'` follows the mainnet
+  boundary, so testnet callers should pin `tx.forkId` or compute the value
+  with `chainForkIdAt(now, TESTNET_REPLAY_PROTECTION_ACTIVATION_TIME)`.
+- **Coordinated signing** (MuSig2, PSBT, multiple devices) must agree on the
+  value. Set `tx.forkId` once and share it with the other signers instead of
+  letting each side resolve `'auto'` independently.
 
 Signatures created before activation stop verifying at the boundary, so
 pending transactions need re-signing. A signature made for Lotus is invalid
@@ -451,11 +464,11 @@ Comprehensive documentation is available in the [`docs/`](docs/) directory:
 ## Testing
 
 ```bash
-# Run all tests
+# Run all tests (Node test runner via tsx)
 npm test
 
-# Run specific test suite
-npm test -- test/crypto/musig2/
+# Run a specific test file
+npx tsx --test test/transaction/replay-protection.test.ts
 
 # Run with coverage
 npm run test:coverage

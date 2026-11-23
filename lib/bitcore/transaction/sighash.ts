@@ -53,7 +53,13 @@ export interface TransactionLike {
 export interface LotusExecutionData {
   /** Double SHA256 of the executed script, or the tapleaf hash. */
   executedScriptHash?: Buffer
-  /** Opcode position of the last executed OP_CODESEPARATOR. */
+  /**
+   * Opcode position of the last executed OP_CODESEPARATOR.
+   *
+   * The default (0xffffffff) is correct only when the script does not execute
+   * a separator. A signer for a script that does must supply the position
+   * that execution reaches; local verification catches a mismatch.
+   */
   codeseparatorPos?: number
 }
 

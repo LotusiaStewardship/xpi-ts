@@ -124,6 +124,54 @@ function goldenTx(forkId: 0 | typeof CHAIN_FORK_ID): Transaction {
   return tx
 }
 
+/**
+ * Two-input golden transaction from the same lotusd build.
+ *
+ * Exercises the multi-leaf paths the single-input vector cannot: input and
+ * output merkle heights of 2, and a spent-outputs merkle root over both
+ * inputs. The node reported complete signatures for both algorithms and
+ * `testmempoolaccept` accepted both, so these signatures are consensus-valid
+ * post-activation.
+ */
+const GOLDEN_MULTI = {
+  unsignedTx:
+    '02000000023c5f18e34beec55ccb9777ae2949035b6b1bea7aa4d9deaad185814d91ff44810100000000ffffffff678defa0a9305bd64238abf55a221f0285475cf1ba479bbe0203135a9a8f78bf0100000000ffffffff0218457f0f000000001976a914751e76e8199196d454941c45d1b3a323f1433bd688ac18457f0f000000001976a914fc7250a211deddc70ee5a2738de5f07817351cef88ac00000000',
+  prevouts: [
+    {
+      script: '76a914751e76e8199196d454941c45d1b3a323f1433bd688ac',
+      satoshis: 260_000_000,
+      wif: 'cMahea7zqjxrtgAbB7LSGbcQUr1uX1ojuat9jZodMN87JcbXMTcA',
+    },
+    {
+      script: '76a914fc7250a211deddc70ee5a2738de5f07817351cef88ac',
+      satoshis: 260_000_000,
+      wif: 'cN9spWsvaxA8taS7DFMxnk1yJD2gaF2PX1npuTpy3vuZFJdwavaw',
+    },
+  ],
+  signatures: {
+    bip143: [
+      '304402204b9d04f2ca5613f9a5e2d9b1645595fc9db69abd48947d9990dd6a4161f21a9502203762e4551dc3cf0b91d86ac24def61406aea613d3884e84fe9ad30157e298a6f41',
+      '304402203851d8cf517838f644a384f76166cb811bf2009fdcc2410604dcea32916a5c6e022078c02982bb5527743cd433df46ff171d38c99e450c72dedaf37d7f89bc0ef02241',
+    ],
+    lotus: [
+      '304402207abfa4af72a005a379344ee08dc75b2436ce0d43f5a56b40b9bac0e5cdc35176022002427e0434ea8bbdc2294628f274267a74e0aca0488dae4259a850ba05baaf4061',
+      '304402204920758078fd140259137bebcf8dd6830343bb440b012adb243e74277af09ba902206fc00421969b72ebf776c37e1a36bf796365443a1332ee363bc49004ef3bd2d461',
+    ],
+  },
+} as const
+
+function goldenMultiTx(forkId: 0 | typeof CHAIN_FORK_ID): Transaction {
+  const tx = Transaction.fromString(GOLDEN_MULTI.unsignedTx)
+  tx.inputs.forEach((input, i) => {
+    input.output = new Output({
+      script: Script.fromString(GOLDEN_MULTI.prevouts[i].script),
+      satoshis: GOLDEN_MULTI.prevouts[i].satoshis,
+    })
+  })
+  tx.forkId = forkId
+  return tx
+}
+
 // ─── Tests ───────────────────────────────────────────────────────
 
 describe('chain fork id', () => {
@@ -289,6 +337,56 @@ describe('golden lotusd signatures', () => {
         0,
         prevScript,
         new BN(GOLDEN.satoshis),
+        undefined,
+        'ecdsa',
+      ),
+      false,
+    )
+  })
+})
+
+describe('golden lotusd multi-input signatures', () => {
+  for (const [label, sigs] of Object.entries(GOLDEN_MULTI.signatures)) {
+    it(`should verify both ${label} inputs under the chain fork id`, () => {
+      const tx = goldenMultiTx(CHAIN_FORK_ID)
+
+      for (let i = 0; i < GOLDEN_MULTI.prevouts.length; i++) {
+        const prevout = GOLDEN_MULTI.prevouts[i]
+        const key = new PrivateKey(prevout.wif, 'regtest')
+        const sig = Signature.fromTxFormat(Buffer.from(sigs[i], 'hex'))
+
+        assert.strictEqual(
+          tx.verifySignature(
+            sig,
+            key.publicKey,
+            i,
+            Script.fromString(prevout.script),
+            new BN(prevout.satoshis),
+            undefined,
+            'ecdsa',
+          ),
+          true,
+          `${label} signature for input ${i} should verify`,
+        )
+      }
+    })
+  }
+
+  it('should reject a multi-input signature under fork id 0', () => {
+    const tx = goldenMultiTx(0)
+    const prevout = GOLDEN_MULTI.prevouts[0]
+    const key = new PrivateKey(prevout.wif, 'regtest')
+    const sig = Signature.fromTxFormat(
+      Buffer.from(GOLDEN_MULTI.signatures.lotus[0], 'hex'),
+    )
+
+    assert.strictEqual(
+      tx.verifySignature(
+        sig,
+        key.publicKey,
+        0,
+        Script.fromString(prevout.script),
+        new BN(prevout.satoshis),
         undefined,
         'ecdsa',
       ),
